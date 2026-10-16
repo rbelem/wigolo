@@ -3,11 +3,28 @@ import type { LLMCallOpts, LLMExtractResult } from './types.js';
 
 const DEFAULT_MODEL = 'gpt-4o-mini';
 
+/** Extra headers for the OpenAI client (e.g. Zen gateway session routing).
+ * Parsed from WIGOLO_OPENAI_EXTRA_HEADERS as a JSON object; defaults to {}.
+ */
+export function openAIExtraHeaders(): Record<string, string> {
+  const raw = process.env.WIGOLO_OPENAI_EXTRA_HEADERS;
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>;
+    }
+  } catch {
+    // Tolerate malformed JSON — fall through to {}.
+  }
+  return {};
+}
+
 export async function callOpenAI(
   opts: LLMCallOpts,
   apiKey: string,
 ): Promise<LLMExtractResult> {
-  const client = new OpenAI({ apiKey });
+  const client = new OpenAI({ apiKey, defaultHeaders: openAIExtraHeaders() });
   const model = opts.modelOverride ?? DEFAULT_MODEL;
   const start = Date.now();
 

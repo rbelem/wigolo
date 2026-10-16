@@ -77,7 +77,8 @@ export async function callAnthropicText(opts: TextCallOpts, apiKey: string): Pro
 
 export async function callOpenAIText(opts: TextCallOpts, apiKey: string): Promise<TextCallResult> {
   const { default: OpenAI } = await import('openai');
-  const client = new OpenAI({ apiKey });
+  const { openAIExtraHeaders } = await import('./openai.js');
+  const client = new OpenAI({ apiKey, defaultHeaders: openAIExtraHeaders() });
   const start = Date.now();
   const content = opts.image
     ? [

@@ -382,6 +382,14 @@ export async function runV1Search(
   const hasDateBound = !!(effectiveFromDate || effectiveToDate);
 
   const allEntries = getEntriesForVertical(vertical);
+  const requested = input.engineFilter
+    ?.map((n) => n.trim().toLowerCase())
+    .filter(Boolean);
+  const filtered =
+    requested && requested.length > 0
+      ? allEntries.filter((e) => requested.includes(e.engine.name.toLowerCase()))
+      : [];
+  const roster = filtered.length > 0 ? filtered : allEntries;
 
   // A date bound no longer narrows the
   // engine set. The previous behaviour dropped every date-naive engine the
@@ -397,8 +405,8 @@ export async function runV1Search(
   // Probe-only engines are held back from the primary wave: they are a
   // per-call latency/failure tax on the happy path but still an independent
   // signal the degraded-recovery wave can pull in when the pool collapses.
-  let entries = allEntries.filter((e) => e.probeOnly !== true);
-  const probeEntries = allEntries.filter((e) => e.probeOnly === true);
+  let entries = roster.filter((e) => e.probeOnly !== true);
+  const probeEntries = roster.filter((e) => e.probeOnly === true);
 
   // Apply caller-supplied engine allowlist (SearchInput.search_engines).
   // Normalise ONCE up front (trim, lowercase, dedupe, sort) and use that

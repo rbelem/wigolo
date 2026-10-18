@@ -2,6 +2,7 @@ import { BingEngine } from '../../engines/bing.js';
 import { DuckDuckGoEngine } from '../../engines/duckduckgo.js';
 import { WikipediaEngine } from '../../engines/wikipedia.js';
 import { BraveEngine } from '../../engines/brave.js';
+import { DeepseekEngine } from '../../engines/deepseek.js';
 import { MojeekEngine } from '../../engines/mojeek.js';
 import { MarginaliaEngine } from '../../engines/marginalia.js';
 import {
@@ -59,6 +60,10 @@ function getBuiltInGeneralEngines(): EngineEntry[] {
 
   if (getConfig().braveApiKey) {
     entries.push({ engine: wrapWithRetryAndBreaker(new BraveEngine()), weight: 1.1, supportsDateFilter: false, quality: 'medium' });
+  }
+
+  if (getConfig().deepseekApiKey) {
+    entries.push({ engine: wrapWithRetryAndBreaker(new DeepseekEngine()), weight: 1.1, supportsDateFilter: false, quality: 'medium' });
   }
 
   cached = entries;

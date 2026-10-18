@@ -89,6 +89,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import {
   isPostExitNativeNoise,
+  inheritedLoaderArgs,
   runDoctorIsolated,
   runDoctorAsChild,
 } from '../../../src/cli/doctor.js';
@@ -175,6 +176,45 @@ describe('isPostExitNativeNoise', () => {
       // the current strict-prefix contract.
       expect(isPostExitNativeNoise('  libc++abi: terminating')).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b) inheritedLoaderArgs — loader-flag forwarding for the isolated child
+// ---------------------------------------------------------------------------
+//
+// A source run under tsx carries its loader in process.execArgv; the child is
+// spawned as bare `node`. Without forwarding, the child cannot resolve the
+// repo's `.js` specifiers and doctor is the only command that breaks, because
+// it is the only one that re-invokes the entry.
+
+describe('inheritedLoaderArgs', () => {
+  it('forwards the tsx loader pair to the child', () => {
+    const execArgv = [
+      '--require',
+      '/repo/node_modules/tsx/dist/preflight.cjs',
+      '--import',
+      'file:///repo/node_modules/tsx/dist/loader.mjs',
+    ];
+    expect(inheritedLoaderArgs(execArgv)).toEqual(execArgv);
+  });
+
+  it('forwards the equals form of a loader flag', () => {
+    expect(inheritedLoaderArgs(['--import=tsx/esm', '--inspect'])).toEqual(['--import=tsx/esm']);
+  });
+
+  it('drops runtime flags so the child stays a cold probe', () => {
+    expect(
+      inheritedLoaderArgs(['--inspect', '--eval', 'console.log(1)', '--enable-source-maps']),
+    ).toEqual([]);
+  });
+
+  it('returns nothing for a production run with no loader registered', () => {
+    expect(inheritedLoaderArgs([])).toEqual([]);
+  });
+
+  it('keeps a bare loader flag without a following value', () => {
+    expect(inheritedLoaderArgs(['--require'])).toEqual(['--require']);
   });
 });
 
@@ -433,6 +473,29 @@ describe('runDoctorIsolated — parent mode sentinel parsing', () => {
 
     const code = await runDoctorAsChild('/tmp/.wigolo');
     expect(code).toBe(1);
+  });
+
+  it('forwards the parent loader flags to the child on a source run', async () => {
+    // Regression: a source run (tsx) spawns bare node for the child. Without
+    // the loader flags the child dies with ERR_MODULE_NOT_FOUND on the repo's
+    // `.js` specifiers, which is exactly the failure this pins.
+    const executable = process.execPath;
+    const tsxLoader = ['--require', '/repo/node_modules/tsx/dist/preflight.cjs', '--import', 'file:///repo/node_modules/tsx/dist/loader.mjs'];
+    const originalExecArgv = process.execArgv;
+    process.execArgv = [...tsxLoader];
+    process.argv = [executable, '/repo/src/index.ts', 'doctor'];
+
+    try {
+      setupChild({ sentinelContent: '0', nativeExitCode: 0, nativeSignal: null });
+      const code = await runDoctorAsChild('/tmp/.wigolo');
+
+      expect(code).toBe(0);
+      const [spawnedCmd, spawnedArgs] = vi.mocked(spawn).mock.calls[0];
+      expect(spawnedCmd).toBe(executable);
+      expect(spawnedArgs).toEqual([...tsxLoader, '/repo/src/index.ts', 'doctor']);
+    } finally {
+      process.execArgv = originalExecArgv;
+    }
   });
 });
 

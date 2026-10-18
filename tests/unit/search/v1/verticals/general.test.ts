@@ -9,20 +9,32 @@ import type { RawSearchResult, SearchEngine } from '../../../../../src/types.js'
 
 describe('getGeneralEngines', () => {
   const originalBraveKey = process.env.BRAVE_API_KEY;
+  const originalDeepseekKey = process.env.DEEPSEEK_API_KEY;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     delete process.env.BRAVE_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    const { resetConfig } = await import('../../../../../src/config.js');
+    resetConfig();
     _resetGeneralEnginesForTest();
     _resetBreakersForTest();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (originalBraveKey === undefined) {
       delete process.env.BRAVE_API_KEY;
     } else {
       process.env.BRAVE_API_KEY = originalBraveKey;
     }
+    if (originalDeepseekKey === undefined) {
+      delete process.env.DEEPSEEK_API_KEY;
+    } else {
+      process.env.DEEPSEEK_API_KEY = originalDeepseekKey;
+    }
+    const { resetConfig } = await import('../../../../../src/config.js');
+    resetConfig();
     _resetGeneralEnginesForTest();
+    _resetBreakersForTest();
   });
 
   // mojeek + marginalia added to the general pool for a broader-lexical
@@ -68,6 +80,17 @@ describe('getGeneralEngines', () => {
     _resetGeneralEnginesForTest();
     const names = getGeneralEngines().map((e) => e.engine.name).sort();
     expect(names).toContain('brave');
+  });
+
+  it('adds deepseek when DEEPSEEK_API_KEY is set', async () => {
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    const { resetConfig } = await import('../../../../../src/config.js');
+    resetConfig();
+    _resetGeneralEnginesForTest();
+    const entries = getGeneralEngines();
+    const deepseek = entries.find((e) => e.engine.name === 'deepseek');
+    expect(deepseek).toBeDefined();
+    expect(deepseek?.quality).toBe('medium');
   });
 
   it('memoizes — two calls return the same array reference', () => {

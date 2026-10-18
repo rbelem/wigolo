@@ -30,7 +30,7 @@ import {
   getPapersEngines,
   _resetPapersEnginesForTest,
 } from '../../../src/search/core/verticals/papers.js';
-import { engineQualityTier, qualityRrfMultiplier } from '../../../src/search/core/engine-quality.js';
+import { engineQualityTier, isEngineClassified, qualityRrfMultiplier } from '../../../src/search/core/engine-quality.js';
 import type { EngineEntry, EngineQualityTier } from '../../../src/search/core/engine-base.js';
 import { resetConfig } from '../../../src/config.js';
 
@@ -42,6 +42,35 @@ function allRegisteredEntries(): EngineEntry[] {
     ...getDocsEngines(),
     ...getPapersEngines(),
   ];
+}
+
+// Every engine a key can enable. They are absent from the default pools, so a
+// registry check that only reads the key-free pools silently skips them.
+const KEYED_ENGINE_KEYS = ['BRAVE_API_KEY', 'DEEPSEEK_API_KEY'] as const;
+
+function allEntriesWithKeysEnabled(): EngineEntry[] {
+  const saved = KEYED_ENGINE_KEYS.map((k) => [k, process.env[k]] as const);
+  for (const k of KEYED_ENGINE_KEYS) process.env[k] = 'test-key';
+  resetConfig();
+  _resetGeneralEnginesForTest();
+  _resetNewsEnginesForTest();
+  _resetCodeEnginesForTest();
+  _resetDocsEnginesForTest();
+  _resetPapersEnginesForTest();
+  try {
+    return allRegisteredEntries();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    resetConfig();
+    _resetGeneralEnginesForTest();
+    _resetNewsEnginesForTest();
+    _resetCodeEnginesForTest();
+    _resetDocsEnginesForTest();
+    _resetPapersEnginesForTest();
+  }
 }
 
 describe('engine quality tiers (S11b)', () => {
@@ -100,5 +129,19 @@ describe('engine quality tiers (S11b)', () => {
         `engine ${entry.engine.name}: vertical tag=${entry.quality}, registry=${registryTier}`,
       ).toBe(registryTier);
     }
+  });
+
+  it('every pooled engine is classified in the registry, including key-gated ones', () => {
+    // The consistency check above cannot catch a medium-tagged engine that is
+    // missing from the registry, because the unlisted default is also medium.
+    // Assert membership, and enable the keyed engines first: they are absent
+    // from the default pools, so a key-free read never sees them.
+    const unclassified = allEntriesWithKeysEnabled()
+      .map((e) => e.engine.name)
+      .filter((name) => !isEngineClassified(name));
+    expect(
+      unclassified,
+      `pooled engines missing from ENGINE_QUALITY: ${unclassified.join(', ')}`,
+    ).toEqual([]);
   });
 });

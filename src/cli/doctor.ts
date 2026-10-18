@@ -1221,6 +1221,44 @@ export async function runDoctorIsolated(dataDir: string, opts?: DoctorOptions): 
   return runDoctorAsChild(dataDir, opts);
 }
 
+/**
+ * Module-loader flags from the parent, forwarded to the isolated child.
+ *
+ * A source run registers a loader through `process.execArgv` (tsx adds
+ * `--require <preflight.cjs> --import <loader.mjs>`). The child is spawned as
+ * bare `node`, so without those flags it cannot resolve the repo's
+ * `.js`-suffixed specifiers and doctor dies with ERR_MODULE_NOT_FOUND while
+ * every in-process subcommand keeps working — the failure only shows through
+ * this re-invocation.
+ *
+ * Only loader and require flags travel. Runtime flags like `--inspect` or
+ * `--eval` must not: the first collides on the debug port, the second replaces
+ * the entry script, and either way the child stops being a faithful cold-start
+ * probe of the real command.
+ */
+export function inheritedLoaderArgs(execArgv: readonly string[]): string[] {
+  const LOADER_FLAGS = ['--require', '--import', '--loader'];
+  const out: string[] = [];
+
+  for (let i = 0; i < execArgv.length; i++) {
+    const arg = execArgv[i];
+    const bare = LOADER_FLAGS.find((flag) => arg === flag);
+    if (bare) {
+      out.push(arg);
+      if (i + 1 < execArgv.length) {
+        out.push(execArgv[i + 1]);
+        i++;
+      }
+      continue;
+    }
+    if (LOADER_FLAGS.some((flag) => arg.startsWith(`${flag}=`))) {
+      out.push(arg);
+    }
+  }
+
+  return out;
+}
+
 export async function runDoctorAsChild(dataDir: string, opts?: DoctorOptions): Promise<number> {
   // Allow opt-out for environments where spawning is undesirable (tests,
   // sandboxed CI). The fallback runs doctor in-process — the libc++ abort
@@ -1247,6 +1285,7 @@ export async function runDoctorAsChild(dataDir: string, opts?: DoctorOptions): P
   // its machine object to the child's stdout, which passes through via the
   // inherited fd — so the JSON survives the child-process isolation path.
   const childArgs = [
+    ...inheritedLoaderArgs(process.execArgv),
     entry,
     'doctor',
     ...(opts?.probeEngines ? ['--probe-engines'] : []),

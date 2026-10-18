@@ -57,6 +57,11 @@ const ENGINE_QUALITY: Record<string, EngineQualityTier> = {
   bing_news: 'medium',
   duckduckgo: 'medium',
   brave: 'medium',
+  // DeepSeek's index returns a long model-facing `summary` rather than a
+  // one-liner, but it is a second-party summary of a page the engine did not
+  // author, so the same `medium` class as brave applies. Listing it keeps the
+  // registry complete rather than relying on the unlisted-engine default.
+  deepseek: 'medium',
   'hn-algolia': 'medium',
   'github-code': 'medium',
   arxiv: 'medium',
@@ -89,6 +94,15 @@ const ENGINE_QUALITY: Record<string, EngineQualityTier> = {
  */
 export function engineQualityTier(name: string): EngineQualityTier {
   return ENGINE_QUALITY[name] ?? 'medium';
+}
+
+/**
+ * Whether an engine name appears in the registry explicitly, as opposed to
+ * falling through {@link engineQualityTier}'s safe default. Lets tests fail
+ * loud when a pooled engine was never classified.
+ */
+export function isEngineClassified(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ENGINE_QUALITY, name);
 }
 
 /**

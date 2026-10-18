@@ -8,10 +8,12 @@ import { _resetBreakersForTest } from '../../../../../src/search/core/engine-bas
 describe('getCodeEngines', () => {
   const originalBraveKey = process.env.BRAVE_API_KEY;
   const originalGithubToken = process.env.WIGOLO_GITHUB_TOKEN;
+  const originalDeepseekKey = process.env.DEEPSEEK_API_KEY;
 
   beforeEach(async () => {
     delete process.env.BRAVE_API_KEY;
     process.env.WIGOLO_GITHUB_TOKEN = 'test-token';
+    delete process.env.DEEPSEEK_API_KEY;
     const { resetConfig } = await import('../../../../../src/config.js');
     resetConfig();
     _resetCodeEnginesForTest();
@@ -29,9 +31,15 @@ describe('getCodeEngines', () => {
     } else {
       process.env.WIGOLO_GITHUB_TOKEN = originalGithubToken;
     }
+    if (originalDeepseekKey === undefined) {
+      delete process.env.DEEPSEEK_API_KEY;
+    } else {
+      process.env.DEEPSEEK_API_KEY = originalDeepseekKey;
+    }
     const { resetConfig } = await import('../../../../../src/config.js');
     resetConfig();
     _resetCodeEnginesForTest();
+    _resetBreakersForTest();
   });
 
   it('returns six entries with a GitHub token (github-code, stackoverflow, devdocs, duckduckgo, mdn, crates-io)', () => {
@@ -69,6 +77,15 @@ describe('getCodeEngines', () => {
     _resetCodeEnginesForTest();
     const names = getCodeEngines().map((e) => e.engine.name).sort();
     expect(names).toContain('brave');
+  });
+
+  it('adds deepseek when DEEPSEEK_API_KEY is set', async () => {
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    const { resetConfig } = await import('../../../../../src/config.js');
+    resetConfig();
+    _resetCodeEnginesForTest();
+    const names = getCodeEngines().map((e) => e.engine.name).sort();
+    expect(names).toContain('deepseek');
   });
 
   it('memoizes — two calls return the same array reference', () => {

@@ -25,6 +25,7 @@ describe('getEngineHealthSummary', () => {
   beforeEach(() => {
     process.env = { ...origEnv };
     delete process.env.BRAVE_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
     delete process.env.WIGOLO_GITHUB_TOKEN;
     resetConfig();
     _resetGeneralEnginesForTest();
@@ -113,6 +114,25 @@ describe('getEngineHealthSummary', () => {
     expect(gh[0].status).toBe('disabled');
     expect(gh[0].vertical).toBe('code');
     expect(gh[0].hint).toMatch(/WIGOLO_GITHUB_TOKEN/);
+  });
+
+  it('flags deepseek as disabled when DEEPSEEK_API_KEY is missing (gated OUT of pool)', () => {
+    const summary = getEngineHealthSummary();
+    const deepseek = summary.find((e) => e.name === 'deepseek');
+    expect(deepseek).toBeDefined();
+    expect(deepseek!.status).toBe('disabled');
+    expect(deepseek!.hint).toMatch(/DEEPSEEK_API_KEY/);
+  });
+
+  it('marks deepseek as ok when DEEPSEEK_API_KEY is set', () => {
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    resetConfig();
+    _resetGeneralEnginesForTest();
+    _resetImageEnginesForTest();
+    _resetCodeEnginesForTest();
+    const summary = getEngineHealthSummary();
+    const deepseek = summary.find((e) => e.name === 'deepseek');
+    expect(deepseek?.status).toBe('ok');
   });
 
   it('marks brave as ok when BRAVE_API_KEY is set', () => {

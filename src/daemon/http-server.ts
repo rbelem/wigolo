@@ -5,6 +5,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { initSubsystems, createMcpServer, type Subsystems } from '../server.js';
+import { disposeRerankProvider } from '../providers/rerank-provider.js';
+import { disposeEmbedProvider } from '../providers/embed-provider.js';
 import { probeHealth } from './health-check.js';
 import { getConfig } from '../config.js';
 import { searxngConfigured } from '../searxng/enabled.js';
@@ -510,6 +512,23 @@ export class DaemonHttpServer {
         log.error('Subsystems shutdown failed', { error: String(err) });
       }
       this.subsystems = null;
+    }
+
+    // Release the reranker's ONNX session. The CLI path has always done this
+    // (src/cli/shutdown.ts); the daemon path did not, so a stopped daemon kept
+    // the native runtime resident for the rest of the process lifetime.
+    try {
+      await disposeRerankProvider();
+    } catch (err) {
+      log.debug('disposeRerankProvider failed', { error: String(err) });
+    }
+
+    // Same for the embedding session — the largest native allocation in the
+    // process (~300 MB for BGE-small).
+    try {
+      await disposeEmbedProvider();
+    } catch (err) {
+      log.debug('disposeEmbedProvider failed', { error: String(err) });
     }
 
     if (this.httpServer) {

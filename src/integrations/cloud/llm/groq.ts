@@ -1,4 +1,4 @@
-import Groq from 'groq-sdk';
+import type GroqClient from 'groq-sdk';
 import type { LLMCallOpts, LLMExtractResult } from './types.js';
 import { validateAgainstSchema, type ValidationError } from './validate.js';
 
@@ -8,6 +8,9 @@ export async function callGroq(
   opts: LLMCallOpts,
   apiKey: string,
 ): Promise<LLMExtractResult> {
+  // Dynamic import: the SDK is ~6 MB resident and only needed when the LLM
+  // extraction fallback actually runs.
+  const { default: Groq } = await import('groq-sdk');
   const client = new Groq({ apiKey });
   const model = opts.modelOverride ?? DEFAULT_MODEL;
   const start = Date.now();
@@ -43,7 +46,7 @@ interface CallOnceResult {
 }
 
 async function runOnce(
-  client: Groq,
+  client: GroqClient,
   model: string,
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   signal: AbortSignal | undefined,

@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { abortRejection } from '../util/abort.js';
 import { settlePage, POST_GOTO_CAP_MS } from './settle.js';
+import { getConfig } from '../config.js';
+import { IdleEvictor } from '../providers/idle-evictor.js';
 import type { ContentCompleteness } from '../types.js';
 
 const log = createLogger('playwright-tier');
@@ -32,6 +34,22 @@ export function shouldEscalate(body: string): boolean {
 let _browser: Browser | null = null;
 let _ctx: BrowserContext | null = null;
 let _launching: Promise<{ browser: Browser; context: BrowserContext }> | null = null;
+// In-flight fetch count. The daemon browser is closed once this tier has been
+// idle for browserProcessIdleTimeoutMs: the Chromium process tree is ~1.2 GB
+// resident, so it has to be reclaimable independently of the process lifetime.
+let _activeFetches = 0;
+
+const _evictor = new IdleEvictor({
+  idleMs: () => getConfig().browserProcessIdleTimeoutMs,
+  isBusy: () => _activeFetches > 0,
+  onEvict: () => {
+    void closeDaemonBrowser().catch((err) =>
+      log.debug('daemon browser idle close failed', {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  },
+});
 
 export async function getDaemonBrowser(): Promise<{ browser: Browser; context: BrowserContext }> {
   if (_browser && _ctx) return { browser: _browser, context: _ctx };
@@ -58,6 +76,7 @@ export async function getDaemonBrowser(): Promise<{ browser: Browser; context: B
 }
 
 export async function closeDaemonBrowser(): Promise<void> {
+  _evictor.dispose();
   _launching = null;
   if (_ctx) { await _ctx.close(); _ctx = null; }
   if (_browser) { await _browser.close(); _browser = null; }
@@ -67,7 +86,18 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
   // Bail out immediately if the caller's budget is already exhausted.
   if (opts.signal?.aborted) throw opts.signal.reason;
 
-  const { context } = await getDaemonBrowser();
+  // Activity on this tier: the daemon browser must not be closed under us.
+  _evictor.dispose();
+  _activeFetches++;
+
+  let context: BrowserContext;
+  try {
+    ({ context } = await getDaemonBrowser());
+  } catch (err) {
+    _activeFetches--;
+    _evictor.touch();
+    throw err;
+  }
   const page = await context.newPage();
 
   // When the caller's signal fires, close THIS page so the in-flight
@@ -96,5 +126,7 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
     opts.signal?.removeEventListener('abort', onAbort);
     // Close the page; tolerate already-closed (double-close is safe).
     await page.close().catch(() => {});
+    _activeFetches--;
+    _evictor.touch();
   }
 }

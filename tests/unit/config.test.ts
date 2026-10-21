@@ -540,8 +540,8 @@ describe('config', () => {
       expect(getConfig().embeddingModel).toBe('all-MiniLM-L6-v2');
     });
 
-    it('embeddingIdleTimeoutMs defaults to 1800000', () => {
-      expect(getConfig().embeddingIdleTimeoutMs).toBe(1800000);
+    it('embeddingIdleTimeoutMs defaults to 600000', () => {
+      expect(getConfig().embeddingIdleTimeoutMs).toBe(600000);
     });
 
     it('embeddingIdleTimeoutMs reads from WIGOLO_EMBEDDING_IDLE_TIMEOUT', () => {
@@ -563,7 +563,7 @@ describe('config', () => {
     it('embeddingIdleTimeoutMs falls back to default on non-numeric', () => {
       process.env.WIGOLO_EMBEDDING_IDLE_TIMEOUT = 'invalid';
       resetConfig();
-      expect(getConfig().embeddingIdleTimeoutMs).toBe(1800000);
+      expect(getConfig().embeddingIdleTimeoutMs).toBe(600000);
     });
 
     it('embeddingMaxTextLength falls back to default on non-numeric', () => {
@@ -684,5 +684,85 @@ describe('config', () => {
       resetConfig();
       expect(getConfig().localLlmModel).toBe('qwen2.5:7b-instruct');
     });
+  });
+});
+
+// Naming contract for the hosted-inference knobs.
+//
+// Every knob on the embedding / reranker / browser surface must be
+// WIGOLO_-prefixed and name its area, so a user scanning `env | grep WIGOLO_`
+// can tell what each one configures. Two names were normalized after review
+// (`_DIM` → `_DIMENSIONS`, bare `BROWSER_PROCESS_IDLE_TIMEOUT` → `WIGOLO_…`);
+// the old spellings stay accepted so existing configs keep working.
+describe('hosted-inference env naming', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    for (const k of [
+      'WIGOLO_EMBEDDING_DIMENSIONS', 'WIGOLO_EMBEDDING_DIM',
+      'WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT', 'BROWSER_PROCESS_IDLE_TIMEOUT',
+      'WIGOLO_EMBEDDING_IDLE_TIMEOUT', 'WIGOLO_EMBEDDING_IDLE_TIMEOUT_MS',
+      'WIGOLO_EMBEDDING_PROVIDER', 'WIGOLO_EMBEDDING_BASE_URL',
+      'WIGOLO_EMBEDDING_API_KEY', 'WIGOLO_RERANKER',
+      'WIGOLO_RERANKER_BASE_URL', 'WIGOLO_RERANKER_API_KEY', 'WIGOLO_RERANKER_MODEL',
+    ]) {
+      delete process.env[k];
+    }
+    resetConfig();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    resetConfig();
+  });
+
+  it('pins the vector width to the schema and ignores any env override', () => {
+    // `vec_documents.embedding` is declared float[384] in DDL and upsert does
+    // not length-check, so a configurable width could only ever be wrong. The
+    // knob was removed rather than left as a footgun.
+    process.env.WIGOLO_EMBEDDING_DIMENSIONS = '768';
+    process.env.WIGOLO_EMBEDDING_DIM = '512';
+    resetConfig();
+    expect(getConfig().embeddingDim).toBe(384);
+  });
+
+  it('reads WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT', () => {
+    process.env.WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT = '1234';
+    resetConfig();
+    expect(getConfig().browserProcessIdleTimeoutMs).toBe(1234);
+  });
+
+  it('still accepts the legacy bare BROWSER_PROCESS_IDLE_TIMEOUT', () => {
+    process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '4321';
+    resetConfig();
+    expect(getConfig().browserProcessIdleTimeoutMs).toBe(4321);
+  });
+
+  it('accepts the _MS suffix on the embedding idle timeout for symmetry with the reranker', () => {
+    process.env.WIGOLO_EMBEDDING_IDLE_TIMEOUT_MS = '9000';
+    resetConfig();
+    expect(getConfig().embeddingIdleTimeoutMs).toBe(9000);
+  });
+
+  it('exposes a WIGOLO_+area-prefixed name for every hosted knob', () => {
+    // Guards against a new knob shipping under a bare or ambiguous name.
+    process.env.WIGOLO_EMBEDDING_PROVIDER = 'openai-compatible';
+    process.env.WIGOLO_EMBEDDING_BASE_URL = 'https://example.test/v1';
+    process.env.WIGOLO_EMBEDDING_API_KEY = 'k';
+    process.env.WIGOLO_RERANKER = 'decision';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://example.test/systemone';
+    process.env.WIGOLO_RERANKER_API_KEY = 'k2';
+    process.env.WIGOLO_RERANKER_MODEL = 'jev-1.13';
+    resetConfig();
+
+    const c = getConfig();
+    expect(c.embeddingProvider).toBe('openai-compatible');
+    expect(c.embeddingBaseUrl).toBe('https://example.test/v1');
+    expect(c.embeddingApiKey).toBe('k');
+    expect(c.reranker).toBe('decision');
+    expect(c.rerankerBaseUrl).toBe('https://example.test/systemone');
+    expect(c.rerankerApiKey).toBe('k2');
+    expect(c.rerankerModel).toBe('jev-1.13');
   });
 });

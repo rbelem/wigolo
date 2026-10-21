@@ -3,10 +3,11 @@
  *
  * Stable interface for embedding implementations. The default swapped the
  * sentence-transformers Python subprocess for fastembed (Rust ONNX via
- * Node bindings); the factory now returns FastembedEmbedProvider.
+ * Node bindings); the factory now returns FastembedEmbedProvider unless a
+ * hosted backend is selected.
  */
 import { createLogger } from '../logger.js';
-import { getConfig } from '../config.js';
+import { getConfig, type Config } from '../config.js';
 import { createIdleUnload, withIdleTracking, type IdleUnload } from './idle-unload.js';
 
 const log = createLogger('providers');
@@ -14,6 +15,8 @@ const log = createLogger('providers');
 export interface EmbedProvider {
   /** Embed a batch of strings; returns one Float32Array per input. */
   embed(texts: string[]): Promise<Float32Array[]>;
+  /** Validate the backend. Loads the model locally; checks config when hosted. */
+  warmup(): Promise<void>;
   /** Dimensionality of embeddings produced by this provider. */
   readonly dim: number;
   /** Model identifier (for cache invalidation / provenance). */
@@ -39,13 +42,27 @@ function withIdleUnload(provider: EmbedProvider, clock: IdleUnload): EmbedProvid
   return withIdleTracking(provider, clock, 'embed');
 }
 
+/**
+ * Build the backend selected by `WIGOLO_EMBEDDING_PROVIDER`, WITHOUT loading
+ * anything yet. The hosted backend is a thin HTTP client; the local class keeps
+ * fastembed dynamically imported so the native binding is only mapped when a
+ * model is actually loaded.
+ */
+function buildProvider(config: Config): Promise<EmbedProvider> {
+  if (config.embeddingProvider === 'openai-compatible') {
+    return import('../embedding/openai-embed-provider.js').then(
+      (m) => new m.OpenAICompatibleEmbedProvider(),
+    );
+  }
+  return import('../embedding/fastembed-provider.js').then((m) => new m.FastembedEmbedProvider());
+}
+
 export function getEmbedProvider(): Promise<EmbedProvider> {
   if (cached) return cached;
   const config = getConfig();
   const startedAt = generation;
-  cached = import('../embedding/fastembed-provider.js')
-    .then(async m => {
-      const p = new m.FastembedEmbedProvider();
+  cached = buildProvider(config)
+    .then(async p => {
       await p.warmup();
       if (generation !== startedAt) {
         // A full dispose landed while this warmup was in flight. The factory
@@ -54,7 +71,12 @@ export function getEmbedProvider(): Promise<EmbedProvider> {
         await releaseEmbedProvider(p);
         throw new Error('embed provider disposed during initialization');
       }
-      log.info('embed provider ready', { provider: 'embed', impl: 'fastembed', modelId: p.modelId, dim: p.dim });
+      log.info('embed provider ready', {
+        provider: 'embed',
+        impl: config.embeddingProvider,
+        modelId: p.modelId,
+        dim: p.dim,
+      });
       instance = p;
       idle = createIdleUnload({
         timeoutMs: config.embeddingIdleTimeoutMs,

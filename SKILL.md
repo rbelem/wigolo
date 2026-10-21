@@ -410,7 +410,16 @@ Top environment variables. All optional — defaults are safe.
 | `WIGOLO_CDP_URL` | unset | Chrome DevTools endpoint (e.g. `http://localhost:9222`) |
 | `MAX_BROWSERS` | `3` | Browser pool size |
 | `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list: `chromium,firefox,webkit` |
-| `WIGOLO_RERANKER` | `none` | `flashrank` for ML reranking |
+| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` \| `remote` \| `decision` (`jev` alias) \| `none` |
+| `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker endpoint (Workers AI, or any Jev-API-compatible decision model) |
+| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker (optional for self-hosts) |
+| `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Reranker model id (e.g. `jev-1.13`) |
+| `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the rerank model is released (~500 MB native) |
+| `WIGOLO_EMBEDDING_PROVIDER` | `local` | `local` (in-process, ~290 MB) \| `openai-compatible` (hosted) |
+| `WIGOLO_EMBEDDING_BASE_URL` | unset | Hosted embeddings endpoint; POSTs to `${BASE_URL}/embeddings` |
+| `WIGOLO_EMBEDDING_API_KEY` | unset | Bearer token for the hosted embeddings endpoint |
+| `WIGOLO_EMBEDDING_IDLE_TIMEOUT` | `600000` | Idle ms before the embedding model is released (~300 MB native) |
+| `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT` | `300000` | Idle ms before the browser process is closed (~1.2 GB resident) |
 | `WIGOLO_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Used by `find_similar` |
 | `CACHE_TTL_CONTENT` | `604800` (7d) | Seconds before cached pages expire |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |

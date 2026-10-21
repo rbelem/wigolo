@@ -20,7 +20,7 @@
  * but the saturation/lightness filter below recovers most of the
  * downstream signal for brand palette use.
  */
-import sharp from 'sharp';
+import type { OutputInfo } from 'sharp';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('extract');
@@ -306,8 +306,12 @@ export async function extractPaletteFromBuffer(
     return null;
   }
 
-  let raw: { data: Buffer; info: sharp.OutputInfo };
+  let raw: { data: Buffer; info: OutputInfo };
   try {
+    // Dynamic import: sharp maps a ~20 MB native addon into the process. It is
+    // only reachable from `extract mode: 'brand'`, so a static import would
+    // pay that cost on every search and fetch.
+    const { default: sharp } = await import('sharp');
     raw = await sharp(buffer, {
       failOn: 'none',
       // Decode only the first frame of animated GIF/WebP/AVIF inputs.

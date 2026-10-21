@@ -65,7 +65,8 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 | `MAX_REDIRECTS` | `5` | Redirect ceiling. |
 | `MAX_BROWSERS` | `3` | Browser-engine pool size for JS-rendered pages. |
 | `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list of browser families to pool. |
-| `BROWSER_IDLE_TIMEOUT` | `60000` | Idle ms before a pooled browser is released. |
+| `BROWSER_IDLE_TIMEOUT` | `60000` | Idle ms before a pooled browser CONTEXT is released. |
+| `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT` | `300000` | Idle ms before the pooled browser PROCESS is closed. The Chromium process tree is ~1.2 GB resident, so closing it when the pool goes quiet is the single largest memory reclaim. `0` keeps it resident forever. |
 | `USER_AGENT` | unset | Override the outgoing user agent. |
 | `RESPECT_ROBOTS_TXT` | `true` | Honor robots.txt on crawls (on by default; be a good citizen). |
 | `CRAWL_CONCURRENCY` | `2` | Parallel fetches per crawl. |
@@ -87,12 +88,99 @@ For fetching pages behind a login with your own browser session: `WIGOLO_CDP_URL
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled model), `remote` (self-hosted endpoint), `none` (disabled), or reserved `custom`. |
+| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (self-hosted Cohere-shape endpoint), `workers-ai` (Cloudflare Workers AI shape), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), `none` (disabled), or reserved `custom`. |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Model name sent to the remote endpoint; the ONNX model is bundled. |
-| `WIGOLO_RERANK_API_BASE` | unset | Remote service base URL; Wigolo sends `POST <base>/rerank`. Required for `remote`. |
-| `WIGOLO_RERANK_API_KEY` | unset | Optional Bearer token for the remote endpoint. Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain; never persisted in `config.json`. |
+| `WIGOLO_RERANK_API_BASE` | unset | `remote` service base URL; Wigolo sends `POST <base>/rerank`. Required for `remote`. |
+| `WIGOLO_RERANK_API_KEY` | unset | Optional Bearer token for the `remote` endpoint. Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain; never persisted in `config.json`. |
 | `WIGOLO_RERANKER_REQUEST_TIMEOUT_MS` | `30000` | Remote request timeout in milliseconds. |
+| `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the ranking model's ONNX session is released. The session parks ~500 MB of native memory that the JS heap does not own. `0` keeps it resident. |
+| `WIGOLO_EMBEDDING_IDLE_TIMEOUT` | `600000` | Idle ms before the embedding model's ONNX session is released (~300 MB of native memory). `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Embedding model for the semantic cache index and `find_similar`. |
+| `WIGOLO_EMBEDDING_PROVIDER` | `local` | `local` runs fastembed in-process (~290 MB resident). `openai-compatible` calls a hosted `/embeddings` endpoint instead (0 MB resident, but a network round-trip and a per-token charge). |
+| `WIGOLO_EMBEDDING_BASE_URL` | unset | Hosted embeddings base URL. The provider POSTs to `${baseUrl}/embeddings`. Examples: `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`, `https://openrouter.ai/api/v1`. |
+| `WIGOLO_EMBEDDING_API_KEY` | unset | Bearer token for the hosted embeddings endpoint. |
+| `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker URL for `workers-ai` (Workers AI shape: `.../ai/run/@cf/baai/bge-reranker-base`) and for `decision` (any Jev-API-compatible endpoint, e.g. `https://opencode.ai/inference/systemone/v1/systemone`, a Cloudflare Clef endpoint, or a self-hosted Kev/Ollaya URL). `remote` uses `WIGOLO_RERANK_API_BASE` instead. |
+| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker. **Optional** for `decision`: self-hosted Kev/Ollaya commonly run unauthenticated. |
+| `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Reranker model id. For `decision`: the vendor's model name (e.g. `jev-1.13`, `jev-1.13-free`, or a self-hosted name). |
+
+### Env naming
+
+Every knob on this surface is `WIGOLO_<AREA>_<THING>` so `env | grep WIGOLO_`
+is self-explanatory:
+
+| Area | Names |
+|---|---|
+| Embeddings | `WIGOLO_EMBEDDING_PROVIDER`, `_BASE_URL`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT` |
+| Reranker | `WIGOLO_RERANKER` (mode), `_BASE_URL`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT_MS` |
+| Browser | `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT`, plus the pre-existing `WIGOLO_BROWSER_TYPES` / `_CHANNEL` / `_HEADFUL` / `_WINDOWLESS` |
+
+The bare `BROWSER_PROCESS_IDLE_TIMEOUT` was normalized to
+`WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT` and the old spelling still works.
+`WIGOLO_EMBEDDING_IDLE_TIMEOUT_MS` is also accepted, for symmetry with the
+reranker's `_MS` suffix.
+
+The vector width is **not** configurable: `vec_documents.embedding` is declared
+`float[384]` in the schema and inserts are not length-checked, so a different
+width could only corrupt nearest-neighbour results. A hosted model that is
+natively wider must be asked for 384 dims via the `dimensions` request
+parameter (OpenRouter and OpenAI support truncation).
+
+### Moving inference off the machine
+
+Two independent switches trade local RAM for network calls:
+
+```bash
+# Embeddings → hosted. Cloudflare's @cf/baai/bge-small-en-v1.5 is the SAME
+# model as the local default at the same 384 dims, so cached vectors stay
+# valid — no re-index.
+export WIGOLO_EMBEDDING_PROVIDER=openai-compatible
+export WIGOLO_EMBEDDING_BASE_URL=https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/ai/v1
+export WIGOLO_EMBEDDING_API_KEY=$CF_TOKEN
+export WIGOLO_EMBEDDING_MODEL=@cf/baai/bge-small-en-v1.5
+
+# Reranker → hosted. Two wire formats, many vendors:
+#   remote   = Workers AI reranker shape ({query, contexts})
+#   decision = any Jev-API-compatible decision model ({model, state, questions})
+#              — Jev, Clef, Kev, Decision Models, Ollaya, pplx-decider-style
+# Changing vendor = changing BASE_URL/MODEL/API_KEY. No code change.
+# NOTE: both are MODEL changes from the local ms-marco cross-encoder, so
+# RERANK_RELEVANCE_THRESHOLD / RERANK_TIER_MARGIN must be re-derived before
+# trusting relevance_score or tier-1 results.
+export WIGOLO_RERANKER=decision
+export WIGOLO_RERANKER_BASE_URL=https://opencode.ai/inference/systemone/v1/systemone
+export WIGOLO_RERANKER_MODEL=jev-1.13          # or jev-1.13-free
+export WIGOLO_RERANKER_API_KEY=$OPENCODE_API_KEY
+
+# Same mode, different vendor (self-hosted, no auth needed):
+# export WIGOLO_RERANKER_BASE_URL=http://localhost:8080/v1/systemone
+# export WIGOLO_RERANKER_MODEL=kev-local
+# (unset WIGOLO_RERANKER_API_KEY)
+```
+
+Measured on a cold daemon doing one browser fetch + one search: node RSS
+**881 MB → 279 MB**. Boot memory is unchanged (~220 MB, which is the daemon's
+own module graph, not the models).
+
+Whether a given gateway can serve each job:
+
+| Provider | Embeddings | Rerank |
+|---|---|---|
+| Cloudflare Workers AI | yes — `@cf/baai/bge-small-en-v1.5` (384, same model) | yes — `@cf/baai/bge-reranker-base` (`remote`); Clef also via `decision` |
+| OpenRouter | yes — `/embeddings`, accepts `dimensions` | no |
+| OpenCode Zen | **no** embeddings endpoint | **yes** — Jev at `/inference/systemone/v1/systemone` (`decision`) |
+| TypeSafe Jev (direct) | no | yes (`decision`) |
+| Kev / Ollaya / Decision Models / Clef self-hosted | no | yes (`decision`) |
+| Laya / pplx-decider | no | same question types, own endpoint — needs a thin adapter |
+| OpenAI / Jina / Voyage / Together / DeepInfra | yes (check the width) | provider-specific |
+| llama.cpp / LM Studio / Ollama | yes — point `BASE_URL` at it | — |
+
+**Why one `decision` mode rather than a mode per vendor:** "Jev-API compatible"
+is the category's de-facto wire standard, and Ollaya exists specifically to
+serve Laya/Kev/Clef and others **locally on Jev's endpoint**. Baking a vendor
+name into the enum would have meant a new provider per product across a market
+of ~20. `decision` covers the compatible majority; only the two "own endpoint,
+same question types" outliers need an adapter.
+
 | `WIGOLO_RELEVANCE_THRESHOLD` | `0` | Drop search results below this reranker score (0 = keep all). |
 
 The default ONNX model downloads once (during `init`/`warmup` or lazily on first use) and runs in-process. For a remote/self-hosted Cohere-style rerank endpoint:

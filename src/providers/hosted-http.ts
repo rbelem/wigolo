@@ -16,6 +16,8 @@
  * Credentials are never logged: the Authorization header is only ever placed
  * on the outgoing request.
  */
+import { withFetchRetry } from './rerank-provider.js';
+
 export interface HostedJsonRequest {
   url: string;
   body: unknown;
@@ -26,6 +28,8 @@ export interface HostedJsonRequest {
   maxResponseBytes?: number;
   /** Short label for error messages ("embeddings", "rerank"). */
   label: string;
+  /** Total attempts for transient failures (timeouts, 5xx). Default 2. */
+  attempts?: number;
 }
 
 /** 8 MB is far above any sane embedding/rerank payload and far below OOM. */
@@ -34,6 +38,15 @@ const ERROR_EXCERPT_CHARS = 300;
 
 export async function postJsonCapped<T>(req: HostedJsonRequest): Promise<T> {
   const maxBytes = req.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+  // One retry by default: these are read-only computations, so retrying is
+  // safe, but the timeout multiplies with attempts — 2 keeps the worst case
+  // bounded while still absorbing a single transient blip or cold self-host.
+  const attempts = req.attempts ?? 2;
+
+  return withFetchRetry(() => once<T>(req, maxBytes), { attempts });
+}
+
+async function once<T>(req: HostedJsonRequest, maxBytes: number): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), req.timeoutMs);
   try {
@@ -49,10 +62,13 @@ export async function postJsonCapped<T>(req: HostedJsonRequest): Promise<T> {
 
     if (!res.ok) {
       const detail = await readCapped(res, 64 * 1024).catch(() => '');
-      throw new Error(
+      const err = new Error(
         `${req.label} request failed: HTTP ${res.status}` +
           (detail ? ` — ${detail.slice(0, ERROR_EXCERPT_CHARS)}` : ''),
       );
+      // Surface the status so withFetchRetry can classify 502/503/504.
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
     }
 
     const raw = await readCapped(res, maxBytes);

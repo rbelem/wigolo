@@ -16,7 +16,7 @@ export const browserCategory: CategoryDef = {
       help: 'Headless browser used by fetch/crawl when JS rendering is needed.',
     },
     {
-      key: 'WIGOLO_MAX_BROWSERS',
+      key: 'MAX_BROWSERS',
       settingsPath: 'maxBrowsers',
       label: 'Max concurrent',
       kind: 'number',
@@ -26,11 +26,11 @@ export const browserCategory: CategoryDef = {
       help: 'Concurrent browser instances. Higher = faster but more RAM.',
     },
     {
-      key: 'WIGOLO_BROWSER_IDLE_TIMEOUT_MS',
+      key: 'BROWSER_IDLE_TIMEOUT',
       settingsPath: 'browserIdleTimeoutMs',
       label: 'Idle timeout (ms)',
       kind: 'number',
-      default: 30000,
+      default: 60000,
       min: 1000,
       max: 600000,
     },

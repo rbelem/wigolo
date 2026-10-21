@@ -7,7 +7,7 @@ describe('advancedCategory', () => {
     expect(advancedCategory.fields.length).toBe(8);
     const keys = advancedCategory.fields.map((f) => f.key);
     expect(keys).toEqual([
-      'WIGOLO_LOG_LEVEL',
+      'LOG_LEVEL',
       'PROXY_URL',
       'USE_PROXY',
       'WIGOLO_SOLVER_URL',
@@ -29,8 +29,8 @@ describe('advancedCategory', () => {
     expect(reader?.help).toBeTruthy();
   });
 
-  it('WIGOLO_LOG_LEVEL is select with all four levels and defaults to info', () => {
-    const f = advancedCategory.fields.find((x) => x.key === 'WIGOLO_LOG_LEVEL');
+  it('LOG_LEVEL is select with all four levels and defaults to info', () => {
+    const f = advancedCategory.fields.find((x) => x.key === 'LOG_LEVEL');
     expect(f?.kind).toBe('select');
     expect(f?.default).toBe('info');
     expect(f?.options?.map((o) => o.value)).toEqual(['debug', 'info', 'warn', 'error']);
@@ -51,10 +51,10 @@ describe('advancedCategory', () => {
     expect(ua?.help).toBeTruthy();
   });
 
-  it('WIGOLO_DAEMON_PORT is a number defaulting to 7777 within 1024-65535', () => {
+  it('WIGOLO_DAEMON_PORT is a number defaulting to 3333 within 1024-65535', () => {
     const f = advancedCategory.fields.find((x) => x.key === 'WIGOLO_DAEMON_PORT');
     expect(f?.kind).toBe('number');
-    expect(f?.default).toBe(7777);
+    expect(f?.default).toBe(3333);
     expect(f?.min).toBe(1024);
     expect(f?.max).toBe(65535);
   });

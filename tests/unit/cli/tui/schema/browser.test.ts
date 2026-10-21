@@ -12,12 +12,12 @@ describe('browserCategory', () => {
   });
 
   it('includes max concurrent + idle timeout fields with sane ranges', () => {
-    const max = browserCategory.fields.find((f) => f.key === 'WIGOLO_MAX_BROWSERS');
+    const max = browserCategory.fields.find((f) => f.key === 'MAX_BROWSERS');
     expect(max?.kind).toBe('number');
     expect(max?.min).toBe(1);
     expect(max?.max).toBe(16);
 
-    const idle = browserCategory.fields.find((f) => f.key === 'WIGOLO_BROWSER_IDLE_TIMEOUT_MS');
+    const idle = browserCategory.fields.find((f) => f.key === 'BROWSER_IDLE_TIMEOUT');
     expect(idle?.kind).toBe('number');
     expect(idle?.min).toBeGreaterThanOrEqual(1000);
   });

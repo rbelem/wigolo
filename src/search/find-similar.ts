@@ -9,7 +9,16 @@ import type { SmartRouter } from '../fetch/router.js';
 import type { BackendStatus } from '../server/backend-status.js';
 import { extractKeyTerms, buildFTS5Query } from '../embedding/key-terms.js';
 import { reciprocalRankFusion, sortByRRFScore } from './rrf.js';
-import { searchCache, getCachedContent, normalizeUrl, getCacheStats } from '../cache/store.js';
+import { ftsSearchRanked, getCachedContent, normalizeUrl, getCacheStats } from '../cache/store.js';
+
+/**
+ * How many ranked URLs to scan when a domain filter is active.
+ *
+ * Ranking rows are (normalized_url, rank) only — around 100 bytes each — so
+ * scanning every match is cheap, whereas truncating before the domain filter
+ * silently drops in-domain hits that ranked below the cut.
+ */
+const FTS_SCAN_ALL = 100_000;
 import { filterByDomains } from './filters.js';
 import { handleSearch } from '../tools/search.js';
 import { getExtractProvider } from '../providers/extract-provider.js';
@@ -591,43 +600,47 @@ function runFTS5Search(
     const fts5Query = buildFTS5Query(terms);
     if (!fts5Query) return [];
 
-    let cached = searchCache(fts5Query);
+    // TWO-PHASE, not rank-then-hydrate.
+    //
+    // Ranking hydrates nothing: `ftsSearchRanked` returns (normalized_url,
+    // score) only, so the window can be wide for free. With a domain filter
+    // the filter must run over the WHOLE match set — a SQL window applied
+    // first cuts the global BM25 stream before the domain narrowing and
+    // silently drops in-domain hits that ranked below the cut. Without a
+    // filter the window is provably irrelevant, since we slice to
+    // `maxCandidates` regardless.
+    const hasDomainFilter = Boolean(includeDomains?.length || excludeDomains?.length);
+    const ranked = ftsSearchRanked(fts5Query, hasDomainFilter ? FTS_SCAN_ALL : maxCandidates * 5);
 
+    let candidates = ranked;
     if (excludeNormalizedUrl) {
-      cached = cached.filter(c => {
-        try {
-          return normalizeUrl(c.url) !== excludeNormalizedUrl;
-        } catch {
-          return c.url !== excludeNormalizedUrl;
-        }
-      });
+      candidates = candidates.filter((c) => c.url !== excludeNormalizedUrl);
     }
 
-    cached = filterByDomains(cached, includeDomains, excludeDomains) as CachedContent[];
-    cached = cached.slice(0, maxCandidates);
+    // Domain filtering on URL shims, before any row is hydrated.
+    const allowed = filterByDomains(
+      candidates.map((c) => ({ url: c.url })) as unknown as CachedContent[],
+      includeDomains,
+      excludeDomains,
+    ) as unknown as Array<{ url: string }>;
+    const allowedUrls = new Set(allowed.map((a) => a.url));
+    const picked = candidates.filter((c) => allowedUrls.has(c.url)).slice(0, maxCandidates);
 
+    // Hydrate ONLY the rows we return. Previously every match's markdown was
+    // materialised and then discarded (only 20 of up to 1000 were read).
     const results: FindSimilarResult[] = [];
-    for (let i = 0; i < cached.length; i++) {
-      const entry = cached[i];
-      let nUrl: string;
-      try {
-        nUrl = normalizeUrl(entry.url);
-      } catch {
-        nUrl = entry.url;
-      }
-
+    for (let i = 0; i < picked.length; i++) {
+      const entry = getCachedContent(picked[i].url);
+      if (!entry) continue;
+      const nUrl = safeNormalize(entry.url);
       rankMap.set(nUrl, i + 1);
-
       results.push({
         url: entry.url,
         title: entry.title,
         markdown: entry.markdown.slice(0, 5000),
         relevance_score: 0,
         source: 'cache',
-        match_signals: {
-          fts5_rank: i + 1,
-          fused_score: 0,
-        },
+        match_signals: { fts5_rank: i + 1, fused_score: 0 },
       });
     }
 

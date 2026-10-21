@@ -6,7 +6,7 @@ export const advancedCategory: CategoryDef = {
   description: 'Logging, proxy, daemon host/port',
   fields: [
     {
-      key: 'WIGOLO_LOG_LEVEL',
+      key: 'LOG_LEVEL',
       settingsPath: 'logLevel',
       label: 'Log level',
       kind: 'select',
@@ -58,7 +58,7 @@ export const advancedCategory: CategoryDef = {
       settingsPath: 'daemonPort',
       label: 'Daemon port',
       kind: 'number',
-      default: 7777,
+      default: 3333,
       min: 1024,
       max: 65535,
     },

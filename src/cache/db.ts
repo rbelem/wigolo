@@ -140,6 +140,10 @@ export function initDatabase(dbPath: string): Database.Database {
       title TEXT,
       markdown TEXT,
       raw_html TEXT,
+      /* Gzipped copy of raw_html; new rows use this and leave raw_html NULL.
+         Declared here as well as in migration 011 so a fresh database has the
+         column without depending on migration ordering. */
+      raw_html_z BLOB,
       metadata TEXT,
       links TEXT,
       images TEXT,

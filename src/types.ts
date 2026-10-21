@@ -1063,6 +1063,14 @@ export interface CacheInput {
   mode?: 'fts' | 'hybrid';
   limit?: number;
   max_tokens_out?: number;
+  /**
+   * Recompress cached rows that still hold plain HTML in `raw_html` into the
+   * gzipped `raw_html_z` column. User-invoked only — nothing runs it
+   * automatically.
+   */
+  compact?: boolean;
+  /** Run VACUUM after compaction so the freed pages leave the database file. */
+  vacuum?: boolean;
 }
 
 export interface CacheResultItem {
@@ -1085,6 +1093,12 @@ export interface CacheOutput {
   cleared?: number;
   error?: string;
   changes?: ChangeReport[];
+  /** Outcome of a `compact` run: rows rewritten and the bytes they cost. */
+  compacted?: {
+    rows_compressed: number;
+    bytes_before: number;
+    bytes_after: number;
+  };
 }
 
 export interface ChangeReport {

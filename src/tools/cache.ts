@@ -4,6 +4,7 @@ import {
   clearCacheEntries,
   ftsSearchRanked,
   getCachedContentByNormalizedUrl,
+  compactRawHtml,
 } from '../cache/store.js';
 import { detectChange } from '../cache/change-detector.js';
 import { getExtractProvider } from '../providers/extract-provider.js';
@@ -27,6 +28,12 @@ const HYBRID_CANDIDATE_FACTOR = 5;
 
 export async function handleCache(input: CacheInput, router?: SmartRouter): Promise<CacheOutput> {
   try {
+    if (input.compact) {
+      log.info('Compacting cached raw HTML', { vacuum: input.vacuum });
+      const compacted = compactRawHtml({ vacuum: input.vacuum });
+      return { compacted };
+    }
+
     if (input.check_changes) {
       log.info('Checking for content changes', {
         query: input.query,

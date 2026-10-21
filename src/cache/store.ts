@@ -329,13 +329,21 @@ export function isCacheUsable(
  * tool's `check_changes` re-fetches the page and compares content hashes.
  * Callers that need the HTML use `getCachedContent`, which projects one row.
  */
+/** Columns that exist on EVERY `url_cache` row.
+ *
+ * Deliberately limited to the inline schema in `cache/db.ts`. `http_status`,
+ * `content_completeness_*`, `embedding` and `embedding_dims` are added by
+ * migrations 006/009+, which can be skipped (read-only DB, migration error
+ * swallowed) — and `SELECT url_cache.*` degraded gracefully for those cases
+ * while naming them explicitly turns the hottest query into a hard
+ * `no such column`. `rowToCachedContent` maps the absent ones to null, exactly
+ * as it did for a legacy `SELECT *` row.
+ */
 const SEARCH_COLUMNS = `
     url_cache.id, url_cache.url, url_cache.normalized_url, url_cache.title,
     url_cache.markdown, url_cache.metadata, url_cache.links, url_cache.images,
     url_cache.fetch_method, url_cache.extractor_used, url_cache.content_hash,
-    url_cache.fetched_at, url_cache.expires_at, url_cache.http_status,
-    url_cache.content_completeness_level, url_cache.content_completeness_reason,
-    url_cache.content_completeness_settled_by
+    url_cache.fetched_at, url_cache.expires_at
   `;
 
 /**

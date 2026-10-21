@@ -8,8 +8,8 @@ describe('cacheCategory', () => {
     const keys = cacheCategory.fields.map((f) => f.key);
     expect(keys).toEqual([
       'WIGOLO_DATA_DIR',
-      'WIGOLO_CACHE_TTL_SEARCH',
-      'WIGOLO_CACHE_TTL_CONTENT',
+      'CACHE_TTL_SEARCH',
+      'CACHE_TTL_CONTENT',
     ]);
   });
 
@@ -19,18 +19,18 @@ describe('cacheCategory', () => {
     expect(f?.propagateToAgents).toBe(false);
   });
 
-  it('WIGOLO_CACHE_TTL_SEARCH defaults to 3600 with min 60 / max 604800', () => {
-    const f = cacheCategory.fields.find((x) => x.key === 'WIGOLO_CACHE_TTL_SEARCH');
+  it('WIGOLO_CACHE_TTL_SEARCH defaults to 86400 with min 60 / max 604800', () => {
+    const f = cacheCategory.fields.find((x) => x.key === 'CACHE_TTL_SEARCH');
     expect(f?.kind).toBe('number');
-    expect(f?.default).toBe(3600);
+    expect(f?.default).toBe(86400);
     expect(f?.min).toBe(60);
     expect(f?.max).toBe(604800);
   });
 
-  it('WIGOLO_CACHE_TTL_CONTENT defaults to 86400 with min 60 / max 2592000', () => {
-    const f = cacheCategory.fields.find((x) => x.key === 'WIGOLO_CACHE_TTL_CONTENT');
+  it('WIGOLO_CACHE_TTL_CONTENT defaults to 604800 with min 60 / max 2592000', () => {
+    const f = cacheCategory.fields.find((x) => x.key === 'CACHE_TTL_CONTENT');
     expect(f?.kind).toBe('number');
-    expect(f?.default).toBe(86400);
+    expect(f?.default).toBe(604800);
     expect(f?.min).toBe(60);
     expect(f?.max).toBe(2592000);
   });

@@ -111,11 +111,19 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
   }
 
   private async request(texts: string[], dimensions: number | undefined): Promise<number[][]> {
+    // Cap each input. Hosted endpoints reject over-length input with a 400, and
+    // `WIGOLO_EMBEDDING_MAX_TEXT_LENGTH` existed but had no consumer at all —
+    // a whole fetched page would otherwise be sent verbatim.
+    const maxChars = getConfig().embeddingMaxTextLength;
+    const capped = maxChars > 0
+      ? texts.map((t) => (t.length > maxChars ? t.slice(0, maxChars) : t))
+      : texts;
+
     const payload = await postJsonCapped<EmbeddingsResponse>({
       url: `${this.baseUrl}/embeddings`,
       body: {
         model: this.modelId,
-        input: texts,
+        input: capped,
         ...(dimensions !== undefined ? { dimensions } : {}),
       },
       apiKey: this.apiKey,

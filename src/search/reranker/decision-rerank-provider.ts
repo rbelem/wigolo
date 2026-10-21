@@ -44,8 +44,42 @@ import { createLogger } from '../../logger.js';
 
 const log = createLogger('reranker');
 
-/** Self-hosted models can be slow on CPU; bound generously. */
-const DECISION_TIMEOUT_MS = 30_000;
+/** Self-hosted models can be slow on CPU; read the knob so it stays tunable. */
+const decisionTimeoutMs = () => getConfig().rerankerRequestTimeoutMs;
+
+/** Hard bounds per gateway call. */
+const MAX_CANDIDATES_PER_CALL = 25;
+const MAX_STATE_CHARS = 12_000;
+/** Per-document cap, so one huge page cannot crowd out the rest. */
+const MAX_DOC_CHARS = 2_000;
+
+function truncateDoc(text: string): string {
+  return text.length > MAX_DOC_CHARS ? `${text.slice(0, MAX_DOC_CHARS)}…` : text;
+}
+
+/**
+ * Split candidates into groups that respect both the count and the state-size
+ * budget. A single candidate always goes in its own chunk even if it alone
+ * exceeds the budget, so the loop always makes progress.
+ */
+function chunkCandidates(candidates: RerankCandidate[]): RerankCandidate[][] {
+  const chunks: RerankCandidate[][] = [];
+  let current: RerankCandidate[] = [];
+  let chars = 0;
+  for (const c of candidates) {
+    const cost = truncateDoc(c.text).length + 8;
+    const full = current.length >= MAX_CANDIDATES_PER_CALL || chars + cost > MAX_STATE_CHARS;
+    if (full && current.length > 0) {
+      chunks.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(c);
+    chars += cost;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
 
 /** Relevance ladder asked of the model. Index order = increasing relevance. */
 const RELEVANCE_BUCKETS = [
@@ -95,9 +129,24 @@ export class DecisionRerankProvider implements RerankProvider {
     if (candidates.length === 0) return [];
     if (!this.baseUrl) await this.warmup();
 
+    // Bound each call by BOTH candidate count and state size. `state` is one
+    // string, so an unbounded batch either blows a small self-hosted model's
+    // context window or gets silently truncated vendor-side — and a document
+    // the model never saw still comes back scored.
+    const chunks = chunkCandidates(candidates);
+
+    const all: RerankResult[] = [];
+    for (const chunk of chunks) {
+      all.push(...(await this.scoreChunk(query, chunk)));
+    }
+    return all.sort((a, b) => b.score - a.score).slice(0, topK);
+  }
+
+  /** One gateway call for a bounded group of candidates. */
+  private async scoreChunk(query: string, chunk: RerankCandidate[]): Promise<RerankResult[]> {
     const questions: Record<string, unknown> = {};
     const indexToId = new Map<number, string>();
-    candidates.forEach((c, i) => {
+    chunk.forEach((c, i) => {
       // Question ids must be stable and unambiguous; a candidate id may contain
       // characters a gateway rejects, so key by position.
       //
@@ -118,14 +167,14 @@ export class DecisionRerankProvider implements RerankProvider {
       `Query: ${query}`,
       '',
       'Documents:',
-      ...candidates.map((c, i) => `[${i}] ${c.text}`),
+      ...chunk.map((c, i) => `[${i}] ${truncateDoc(c.text)}`),
     ].join('\n');
 
     const payload = await postJsonCapped<unknown>({
       url: this.baseUrl,
       body: { model: this.modelId, state, questions },
       apiKey: this.apiKey,
-      timeoutMs: DECISION_TIMEOUT_MS,
+      timeoutMs: decisionTimeoutMs(),
       label: 'decision rerank',
     });
 
@@ -136,7 +185,7 @@ export class DecisionRerankProvider implements RerankProvider {
           `(keys: ${Object.keys(asRecord(payload) ?? {}).join(', ') || 'none'})`,
       );
     }
-    return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+    return scored;
   }
 }
 

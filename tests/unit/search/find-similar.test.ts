@@ -692,3 +692,46 @@ describe('findSimilar', () => {
     });
   });
 });
+
+// Regression: the cache ranking path must not truncate BEFORE the domain
+// filter. `runFTS5Search` used to hydrate `LIMIT 1000` rows and filter domains
+// afterwards, so an in-domain hit that ranked below the window vanished even
+// though it matched. The fix ranks URLs only, filters, then hydrates.
+describe('findSimilar cache ranking vs domain filters', () => {
+  // Local mocks: the ones in the sibling describe are scoped to it. The cache
+  // path must work with no web engine contributing anything.
+  const engines: SearchEngine[] = [
+    { name: 'noop', search: vi.fn().mockResolvedValue([]) } as unknown as SearchEngine,
+  ];
+  const router = { fetch: vi.fn() } as unknown as SmartRouter;
+
+  beforeEach(() => {
+    resetConfig();
+    initDatabase(':memory:');
+  });
+
+  afterEach(() => {
+    closeDatabase();
+    resetConfig();
+  });
+
+  it('finds an in-domain hit that ranks beyond the old 1000-row window', async () => {
+    // 1050 generic matches, then the ONLY rare-domain row inserted last. With
+    // identical bodies they tie on bm25, so insertion order puts the rare row
+    // past position 1000 — exactly where the old window cut it off.
+    const body = 'Zeppelin parser notes and configuration details.';
+    for (let i = 0; i < 1050; i++) {
+      seedCache(`https://bulk${i}.example.com/page`, 'Zeppelin parser', body);
+    }
+    seedCache('https://rare-only.test/target', 'Zeppelin parser', body);
+
+    const result = await findSimilar(
+      { concept: 'zeppelin parser', include_domains: ['rare-only.test'], max_results: 5 },
+      engines,
+      router,
+    );
+
+    const urls = result.results.map((r) => r.url);
+    expect(urls.some((u) => u.includes('rare-only.test'))).toBe(true);
+  }, 60_000);
+});

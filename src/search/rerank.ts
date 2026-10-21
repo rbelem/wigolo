@@ -5,6 +5,7 @@ import { applyAuthorityBoost } from './reranker/authority-boost.js';
 import { applyConsensusBoost } from './reranker/consensus-boost.js';
 import { rerankInputText } from './core/rerank-fold.js';
 import { getConfig } from '../config.js';
+import { rerankerActive } from './rerank-mode.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('search');
@@ -18,7 +19,7 @@ export async function rerankResults(
   const config = getConfig();
   if (results.length === 0) return results;
 
-  if (config.reranker === 'onnx' || config.reranker === 'remote') {
+  if (rerankerActive()) {
     try {
       const provider = await getRerankProvider();
       const candidates = results.map((r, i) => ({

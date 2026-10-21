@@ -329,6 +329,48 @@ describe('searchCache (FTS5)', () => {
     const results = searchCache('TriggerFired');
     expect(results.length).toBe(1);
   });
+
+  it('does not hydrate raw_html on the multi-row search path', () => {
+    // raw_html averages ~197 KB per row. Projecting it into a multi-row FTS
+    // result hydrated tens of MB per call for data no caller reads.
+    const big = '<html><body>' + 'x'.repeat(500_000) + '</body></html>';
+    cacheContent(
+      { ...makeRaw('https://example.com/huge'), html: big },
+      makeExtraction({ title: 'HugePage' }),
+    );
+
+    const results = searchCache('HugePage');
+    expect(results.length).toBe(1);
+    expect(results[0].rawHtml).toBe('');
+
+    // ...but the single-row accessor still returns it.
+    expect(getCachedContent('https://example.com/huge')?.rawHtml).toBe(big);
+  });
+
+  it('honours an explicit row limit', () => {
+    for (let i = 0; i < 5; i++) {
+      cacheContent(
+        makeRaw(`https://example.com/lim-${i}`),
+        makeExtraction({ title: `LimitTarget ${i}` }),
+      );
+    }
+    expect(searchCache('LimitTarget', 5).length).toBe(5);
+    expect(searchCache('LimitTarget', 2).length).toBe(2);
+  });
+
+  it('returns matches in BM25 rank order', () => {
+    // The rarer term should rank first for a two-term query.
+    cacheContent(
+      makeRaw('https://example.com/both'),
+      makeExtraction({ title: 'Quasar Nebula' }),
+    );
+    cacheContent(
+      makeRaw('https://example.com/one'),
+      makeExtraction({ title: 'Nebula only' }),
+    );
+    const results = searchCache('Quasar Nebula');
+    expect(results[0].title).toBe('Quasar Nebula');
+  });
 });
 
 describe('search result caching', () => {

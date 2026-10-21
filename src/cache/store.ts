@@ -162,7 +162,8 @@ interface DbRow {
   normalized_url: string;
   title: string;
   markdown: string;
-  raw_html: string;
+  /** Absent when the query projected it out (see SEARCH_COLUMNS). */
+  raw_html?: string;
   metadata: string;
   links: string;
   images: string;
@@ -200,7 +201,7 @@ function rowToCachedContent(row: DbRow): CachedContent {
     normalizedUrl: row.normalized_url,
     title: row.title,
     markdown: row.markdown,
-    rawHtml: row.raw_html,
+    rawHtml: row.raw_html ?? '',
     metadata: row.metadata,
     links: row.links,
     images: row.images,
@@ -317,16 +318,52 @@ export function isCacheUsable(
   return { usable: false, stale: false };
 }
 
-export function searchCache(query: string): CachedContent[] {
+/**
+ * Column list for the MULTI-ROW cache queries.
+ *
+ * `raw_html` and `embedding` are deliberately excluded. `raw_html` averages
+ * ~197 KB per row, so a broad FTS match under `SELECT url_cache.*` hydrated
+ * tens of MB of strings per call; `embedding` is a 384-float BLOB that
+ * `rowToCachedContent` never reads at all. No caller of these queries reads
+ * the HTML either — `find-similar` wants url/title/markdown, and the cache
+ * tool's `check_changes` re-fetches the page and compares content hashes.
+ * Callers that need the HTML use `getCachedContent`, which projects one row.
+ */
+const SEARCH_COLUMNS = `
+    url_cache.id, url_cache.url, url_cache.normalized_url, url_cache.title,
+    url_cache.markdown, url_cache.metadata, url_cache.links, url_cache.images,
+    url_cache.fetch_method, url_cache.extractor_used, url_cache.content_hash,
+    url_cache.fetched_at, url_cache.expires_at, url_cache.http_status,
+    url_cache.content_completeness_level, url_cache.content_completeness_reason,
+    url_cache.content_completeness_settled_by
+  `;
+
+/**
+ * How many FTS candidates a full-text cache search hydrates.
+ *
+ * The caller (`find-similar`) filters by domain and slices to
+ * MAX_FTS5_CANDIDATES (20) AFTER the query, so the SQL limit has to be a
+ * generous window rather than the final count — otherwise a domain-filtered
+ * query would silently return fewer hits than requested.
+ *
+ * 1000 is effectively unbounded for that filter stage on a realistic cache
+ * while still bounding the hydration. Measured against the live cache, the
+ * projected row is ~16 KB (vs ~197 KB unprojected), so 1000 rows ≈ 16 MB —
+ * less than the 80 MB a single broad query cost before the projection fix.
+ */
+const FTS_CANDIDATE_LIMIT = 1000;
+
+export function searchCache(query: string, limit = FTS_CANDIDATE_LIMIT): CachedContent[] {
   const db = getDatabase();
 
   const rows = db.prepare(`
-    SELECT url_cache.*
+    SELECT ${SEARCH_COLUMNS}
     FROM url_cache
     JOIN url_cache_fts ON url_cache.id = url_cache_fts.rowid
     WHERE url_cache_fts MATCH ?
-    ORDER BY rank
-  `).all(sanitizeFtsQuery(query)) as DbRow[];
+    ORDER BY url_cache_fts.rank
+    LIMIT ?
+  `).all(sanitizeFtsQuery(query), Math.max(1, Math.floor(limit))) as DbRow[];
 
   return rows.map(rowToCachedContent);
 }
@@ -508,10 +545,10 @@ export function searchCacheFiltered(options: {
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const orderClause = options.query ? 'ORDER BY rank' : 'ORDER BY url_cache.fetched_at DESC';
+  const orderClause = options.query ? 'ORDER BY url_cache_fts.rank' : 'ORDER BY url_cache.fetched_at DESC';
   const limit = Math.max(1, Math.floor(options.limit ?? DEFAULT_FILTERED_LIMIT));
 
-  const sql = `SELECT url_cache.* FROM ${fromClause} ${whereClause} ${orderClause} LIMIT ?`;
+  const sql = `SELECT ${SEARCH_COLUMNS} FROM ${fromClause} ${whereClause} ${orderClause} LIMIT ?`;
   const rows = db.prepare(sql).all(...params, limit) as DbRow[];
   return rows.map(rowToCachedContent);
 }

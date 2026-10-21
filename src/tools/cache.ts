@@ -173,20 +173,23 @@ async function runHybridSearch(input: CacheInput): Promise<CacheResultItem[] | n
   const limit = Math.max(1, input.limit ?? DEFAULT_HYBRID_LIMIT);
   const candidateLimit = Math.max(HYBRID_CANDIDATE_FLOOR, limit * HYBRID_CANDIDATE_FACTOR);
 
+  // Check the index size BEFORE resolving the embed provider: resolving it
+  // loads the native embedding session (~300 MB) even when there is nothing
+  // to search, and an empty index cannot produce a hybrid result anyway.
+  const store = await getVectorStore();
+  const indexSize = await store.size();
+  if (indexSize === 0) {
+    log.debug('hybrid search skipped — vector index empty');
+    return null;
+  }
+
   let embedProvider;
-  let store;
   try {
-    [embedProvider, store] = await Promise.all([getEmbedProvider(), getVectorStore()]);
+    embedProvider = await getEmbedProvider();
   } catch (err) {
     log.warn('hybrid search unavailable — embed/vector provider failed', {
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
-  }
-
-  const indexSize = await store.size();
-  if (indexSize === 0) {
-    log.debug('hybrid search skipped — vector index empty');
     return null;
   }
 

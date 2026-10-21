@@ -8,6 +8,15 @@
  */
 import { createLogger } from '../logger.js';
 import { getConfig } from '../config.js';
+import type { Config } from '../config.js';
+
+/** Modes served by a hosted endpoint rather than an in-process ONNX model. */
+const HOSTED_RERANK_MODES = new Set<Config['reranker']>([
+  'remote',
+  'workers-ai',
+  'decision',
+  'jev',
+]);
 
 const log = createLogger('providers');
 export interface RerankCandidate {
@@ -76,24 +85,63 @@ export async function withFetchRetry<T>(
   throw lastErr;
 }
 
+/**
+ * Instantiate a hosted reranker for `mode`. Three wire shapes live behind the
+ * one "hosted" idea, so the caller picks by mode rather than sniffing config.
+ */
+async function loadHostedRerankProvider(mode: Config['reranker']): Promise<RerankProvider> {
+  if (mode === 'remote') {
+    const { RemoteRerankProvider } = await import('../search/reranker/remote-rerank-provider.js');
+    return new RemoteRerankProvider(getConfig());
+  }
+  if (mode === 'workers-ai') {
+    const { WorkersAiRerankProvider } = await import(
+      '../search/reranker/workers-ai-rerank-provider.js'
+    );
+    return new WorkersAiRerankProvider();
+  }
+  // `jev` is a legacy alias for `decision` (Jev-compatible wire format), kept
+  // so an existing WIGOLO_RERANKER=jev keeps working.
+  const { DecisionRerankProvider } = await import('../search/reranker/decision-rerank-provider.js');
+  return new DecisionRerankProvider();
+}
+
+/** Providers that validate their config in a `warmup()` hook opt in by having one. */
+async function warmupIfSupported(provider: RerankProvider): Promise<void> {
+  const warmup = (provider as { warmup?: () => Promise<void> }).warmup;
+  if (typeof warmup === 'function') await warmup.call(provider);
+}
+
 export function getRerankProvider(): Promise<RerankProvider> {
   if (cached) return cached;
   const config = getConfig();
-  cached = (async () => {
-    if (config.reranker === 'remote') {
-      const { RemoteRerankProvider } = await import('../search/reranker/remote-rerank-provider.js');
-      return new RemoteRerankProvider(config);
-    }
-    const { TransformersRerankProvider } = await import('../search/reranker/transformers-rerank-provider.js');
-    const provider = new TransformersRerankProvider();
-    await withFetchRetry(() => provider.warmup());
-    log.info('rerank provider ready', {
-      provider: 'rerank',
-      impl: 'transformers',
-      modelId: provider.modelId,
-    });
-    return provider;
-  })()
+
+  // Hosted path: no model is loaded, so there is nothing to warm beyond
+  // config validation and no native session to release.
+  if (HOSTED_RERANK_MODES.has(config.reranker)) {
+    cached = loadHostedRerankProvider(config.reranker)
+      .then(async (provider) => {
+        await warmupIfSupported(provider);
+        return provider;
+      })
+      .catch((err) => {
+        cached = null;
+        throw err;
+      });
+    return cached;
+  }
+
+  cached = import('../search/reranker/transformers-rerank-provider.js')
+    .then(async (m) => {
+      const p = new m.TransformersRerankProvider();
+      await withFetchRetry(() => p.warmup());
+      log.info('rerank provider ready', {
+        provider: 'rerank',
+        impl: 'transformers',
+        modelId: p.modelId,
+      });
+      return p;
+    })
     .catch((err) => {
       cached = null;
       throw err;

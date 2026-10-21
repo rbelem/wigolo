@@ -198,7 +198,11 @@ describe('fetchWithPlaywright bounds total post-goto wait by the shared settle c
     const { fetchWithPlaywright } = await import('../../../src/fetch/playwright-tier.js');
     // No timeoutMs, no signal — the unbounded-caller case the perf review flagged.
     const promise = fetchWithPlaywright('https://react.dev/reference/react');
-    await vi.runAllTimersAsync();
+    // Advance by the cap (+ slack) rather than running ALL timers: the daemon
+    // browser's idle-close timer is a 5-minute background timer, and letting
+    // runAllTimersAsync fire it would advance the clock by 300s and mask the
+    // settle bound this test exists to assert.
+    await vi.advanceTimersByTimeAsync(POST_GOTO_CAP_MS + 500);
     await promise;
 
     // Actual post-goto wall-clock (simulated) must not exceed the shared cap —

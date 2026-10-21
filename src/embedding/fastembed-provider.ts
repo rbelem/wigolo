@@ -6,6 +6,7 @@ import { join } from 'node:path';
 // the boot chain touches this module.
 import type { FlagEmbedding } from 'fastembed';
 import type { EmbedProvider } from '../providers/embed-provider.js';
+import { IdleEvictor } from '../providers/idle-evictor.js';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 
@@ -69,6 +70,70 @@ export async function initModelWithArchiveRetry<T>(
 }
 
 /**
+ * ONE native ONNX session per process.
+ *
+ * The session used to live in instance fields, so the two independent
+ * providers that exist in this codebase — EmbeddingService's own instance
+ * and the `getEmbedProvider()` factory — each created their own
+ * FlagEmbedding. A process that touched both held two copies of the model
+ * (~290 MB of native memory each). Hoisting the session to module scope
+ * makes the second provider reuse the first.
+ */
+let sharedModel: FlagEmbedding | null = null;
+let sharedModelPromise: Promise<FlagEmbedding> | null = null;
+
+/** Number of embeds currently running — eviction defers while non-zero. */
+let inFlightEmbeds = 0;
+
+/** True while the native embedding session is resident in this process. */
+export function isEmbedModelResident(): boolean {
+  return sharedModel !== null;
+}
+
+/**
+ * Release the native ONNX session.
+ *
+ * The session's weights live in native memory that the JS heap does not
+ * own, so an explicit release is the only deterministic way to reclaim it
+ * (~300 MB resident for BGE-small). Dropping the reference alone frees the
+ * memory only when the GC happens to run.
+ *
+ * Idempotent: safe to call when nothing is loaded, and safe to call twice.
+ */
+export function releaseEmbedModel(): void {
+  // Never release the session while an inference is running — the native
+  // runtime gives no guarantee about release() racing an in-flight run().
+  if (inFlightEmbeds > 0) {
+    log.debug('embedding release deferred — an embed is in flight');
+    return;
+  }
+  const model = sharedModel;
+  sharedModel = null;
+  sharedModelPromise = null;
+  if (!model) return;
+  const session = (model as unknown as { session?: { release?: () => void } }).session;
+  try {
+    session?.release?.();
+  } catch (err) {
+    log.debug('embedding session release failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  log.info('Embedding model released');
+}
+
+/**
+ * Idle eviction for the embedding session. The window is read at arm time so
+ * a config change takes effect on the next use. `embeddingIdleTimeoutMs` of 0
+ * disables eviction entirely.
+ */
+const embedEvictor = new IdleEvictor({
+  idleMs: () => getConfig().embeddingIdleTimeoutMs,
+  isBusy: () => inFlightEmbeds > 0,
+  onEvict: () => releaseEmbedModel(),
+});
+
+/**
  * Native ONNX embedding provider using fastembed-rs Node bindings.
  *
  * Model: BGE-small-en-v1.5 (384-dim). First call to `warmup()` downloads
@@ -76,8 +141,6 @@ export async function initModelWithArchiveRetry<T>(
  * Replaces the legacy sentence-transformers Python subprocess.
  */
 export class FastembedEmbedProvider implements EmbedProvider {
-  private model: FlagEmbedding | null = null;
-  private modelPromise: Promise<FlagEmbedding> | null = null;
   readonly modelId: string;
   readonly dim: number;
 
@@ -91,12 +154,12 @@ export class FastembedEmbedProvider implements EmbedProvider {
   }
 
   private getModel(): Promise<FlagEmbedding> {
-    if (this.model) return Promise.resolve(this.model);
-    if (this.modelPromise) return this.modelPromise;
+    if (sharedModel) return Promise.resolve(sharedModel);
+    if (sharedModelPromise) return sharedModelPromise;
     log.info('Loading embedding model', { modelId: this.modelId });
     const dataDir = getConfig().dataDir;
     const cacheDir = ensureFastembedCacheDir(dataDir);
-    this.modelPromise = import('fastembed')
+    sharedModelPromise = import('fastembed')
       .then(({ FlagEmbedding, EmbeddingModel }) =>
         initModelWithArchiveRetry(
           () => FlagEmbedding.init({ model: EmbeddingModel.BGESmallENV15, cacheDir }),
@@ -104,25 +167,34 @@ export class FastembedEmbedProvider implements EmbedProvider {
         ),
       )
       .then(m => {
-      this.model = m;
+      sharedModel = m;
       log.info('Embedding model ready', { modelId: this.modelId, dim: this.dim });
+      embedEvictor.touch();
       return m;
     }).catch(err => {
-      this.modelPromise = null;
+      sharedModelPromise = null;
       throw err;
     });
-    return this.modelPromise;
+    return sharedModelPromise;
   }
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    const model = await this.getModel();
-    const out: Float32Array[] = [];
-    for await (const batch of model.embed(texts, texts.length)) {
-      for (const vec of batch) {
-        out.push(Float32Array.from(vec));
+    // Count the embed as in-flight BEFORE loading: a concurrent idle
+    // eviction must not release the session while a load is pending.
+    inFlightEmbeds++;
+    try {
+      const model = await this.getModel();
+      const out: Float32Array[] = [];
+      for await (const batch of model.embed(texts, texts.length)) {
+        for (const vec of batch) {
+          out.push(Float32Array.from(vec));
+        }
       }
+      return out;
+    } finally {
+      inFlightEmbeds--;
+      embedEvictor.touch();
     }
-    return out;
   }
 }

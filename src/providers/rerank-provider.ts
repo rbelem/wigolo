@@ -7,6 +7,7 @@
  * but it is no longer wired in.
  */
 import { createLogger } from '../logger.js';
+import { getConfig } from '../config.js';
 
 const log = createLogger('providers');
 export interface RerankCandidate {
@@ -77,6 +78,33 @@ export async function withFetchRetry<T>(
 
 export function getRerankProvider(): Promise<RerankProvider> {
   if (cached) return cached;
+  const cfg = getConfig();
+
+  // Hosted path: no model is loaded, so there is nothing to warm beyond
+  // config validation and no native session to release.
+  if (cfg.reranker === 'remote' || cfg.reranker === 'decision' || cfg.reranker === 'jev') {
+    // `jev` is a legacy alias for `decision` (Jev-compatible wire format), kept
+    // so an existing WIGOLO_RERANKER=jev keeps working.
+    const isDecision = cfg.reranker !== 'remote';
+    cached = (isDecision
+      ? import('../search/reranker/decision-rerank-provider.js').then(
+          (m) => new m.DecisionRerankProvider(),
+        )
+      : import('../search/reranker/remote-rerank-provider.js').then(
+          (m) => new m.RemoteRerankProvider(),
+        )
+    )
+      .then(async (p) => {
+        await p.warmup();
+        return p;
+      })
+      .catch((err) => {
+        cached = null;
+        throw err;
+      });
+    return cached;
+  }
+
   cached = import('../search/reranker/transformers-rerank-provider.js')
     .then(async (m) => {
       const p = new m.TransformersRerankProvider();

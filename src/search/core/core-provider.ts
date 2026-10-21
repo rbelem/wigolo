@@ -44,6 +44,7 @@ import {
   getCachedSearchResults,
 } from '../../cache/store.js';
 import { getConfig } from '../../config.js';
+import { rerankerActive } from '../rerank-mode.js';
 import { createLogger } from '../../logger.js';
 import type { Citation } from '../../types.js';
 
@@ -578,7 +579,7 @@ export class CoreSearchProvider implements SearchProvider {
       if (
         (depth === 'balanced' || depth === 'deep') &&
         !isImagesCategory &&
-        getConfig().reranker === 'onnx'
+        rerankerActive()
       ) {
         processed = await foldRerankIntoOrdering(processed, {
           queries,

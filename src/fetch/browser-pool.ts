@@ -1,6 +1,7 @@
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Download } from 'playwright';
 import { readFile } from 'node:fs/promises';
 import { getConfig } from '../config.js';
+import { IdleEvictor } from '../providers/idle-evictor.js';
 import { createLogger } from '../logger.js';
 import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
@@ -280,6 +281,12 @@ interface TypePool {
 
 export class MultiBrowserPool {
   private readonly pools = new Map<BrowserType, TypePool>();
+  /**
+   * Idle evictor per browser type — closes the browser PROCESS once the type
+   * has been quiescent for browserProcessIdleTimeoutMs. Distinct from the
+   * per-context timers in TypePool.idleTimers, which only evict contexts.
+   */
+  private readonly browserEvictors = new Map<BrowserType, IdleEvictor>();
   private readonly selector: BrowserSelector;
   private readonly configuredTypes: BrowserType[];
   private shutdownCalled = false;
@@ -320,6 +327,27 @@ export class MultiBrowserPool {
         waitQueue: [],
         idleTimers: new Map(),
       });
+      // Idle eviction for the browser PROCESS. The Chromium process tree is
+      // the single largest resident cost (~1.2 GB), so it must be reclaimable
+      // independently of the contexts it hosts.
+      this.browserEvictors.set(
+        type,
+        new IdleEvictor({
+          idleMs: () => getConfig().browserProcessIdleTimeoutMs,
+          // A browser is never evicted while the type is not quiescent: the
+          // in-flight fetch would fail. Deferral is unbounded here (unlike a
+          // model session) because a fetch always completes — it has its own
+          // timeout — and releasing its context re-arms the clock.
+          isBusy: () => {
+            const p = this.pools.get(type)!;
+            return p.activeCount > 0 || p.pool.length > 0 || p.waitQueue.length > 0;
+          },
+          maxDeferrals: Number.POSITIVE_INFINITY,
+          onEvict: () => {
+            void this.closeBrowserIfIdle(type);
+          },
+        }),
+      );
     }
 
     log.info('multi-browser pool initialized', {
@@ -378,8 +406,58 @@ export class MultiBrowserPool {
         env: sanitizedChildEnv({ stripProxy: true }),
         ...(proxy ? { proxy } : {}),
       });
+      // A browser launched with no context (the prewarm path) would otherwise
+      // never be reclaimed: there is no context idle timer to piggyback on.
+      // Start the idle clock here so the browser is closed once the type has
+      // been idle. In the acquire path activeCount was already incremented, so
+      // the guard below skips arming — the browser is in use.
+      if (typePool.activeCount === 0 && typePool.pool.length === 0) {
+        this.browserEvictors.get(type)?.touch();
+      }
     }
     return typePool.browser;
+  }
+
+  /**
+   * Close the browser process when the type is quiescent.
+   *
+   * Invoked by the idle evictor. Every condition below must hold: the browser
+   * is closed while a context is live, the in-flight fetch would fail. The
+   * checks and the reference swap happen in one synchronous block, so no
+   * acquire can interleave between them.
+   */
+  private async closeBrowserIfIdle(type: BrowserType): Promise<void> {
+    const typePool = this.pools.get(type)!;
+    if (!typePool.browser) return;
+    if (typePool.activeCount > 0) return;
+    if (typePool.pool.length > 0) return;
+    if (typePool.waitQueue.length > 0) return;
+    // Null the reference BEFORE awaiting the close so a concurrent acquire
+    // relaunches a fresh browser instead of adopting a dying handle.
+    const browser = typePool.browser;
+    typePool.browser = null;
+    try {
+      await browser.close();
+      log.info('browser process closed after idle', { type });
+    } catch (err) {
+      log.debug('browser idle close failed', {
+        type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Arm the browser-process idle close for a type. The timer fires only after
+   * the type has been fully quiescent — no live context, no pooled context and
+   * no waiter — for browserProcessIdleTimeoutMs.
+   */
+  private armBrowserIdleTimer(type: BrowserType): void {
+    this.browserEvictors.get(type)?.touch();
+  }
+
+  private clearBrowserIdleTimer(type: BrowserType): void {
+    this.browserEvictors.get(type)?.dispose();
   }
 
   /**
@@ -409,6 +487,9 @@ export class MultiBrowserPool {
     const config = getConfig();
     const maxBrowsers = config.maxBrowsers;
     const typePool = this.pools.get(type)!;
+
+    // Activity on this type: the browser must not be closed under us.
+    this.clearBrowserIdleTimer(type);
 
     if (typePool.pool.length > 0) {
       const ctx = typePool.pool.pop()!;
@@ -454,6 +535,12 @@ export class MultiBrowserPool {
         typePool.idleTimers.delete(ctx);
         typePool.activeCount = Math.max(0, typePool.activeCount - 1);
         ctx.close().catch(() => {});
+        // Last context for this type is gone: the browser process is now
+        // reclaimable. Arm the process timer (re-armed on every eviction, so
+        // a type with several contexts converges to a single close).
+        if (typePool.activeCount === 0) {
+          this.armBrowserIdleTimer(type);
+        }
       }
     }, idleTimeoutMs);
 
@@ -1620,6 +1707,7 @@ export class MultiBrowserPool {
         clearTimeout(timer);
       }
       typePool.idleTimers.clear();
+      this.clearBrowserIdleTimer(type);
 
       const closePromises = typePool.pool.map(ctx => ctx.close().catch(() => {}));
       typePool.pool = [];

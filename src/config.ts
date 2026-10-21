@@ -65,6 +65,16 @@ export interface Config {
   validateTimeoutMs: number;
   maxBrowsers: number;
   browserIdleTimeoutMs: number;
+  /**
+   * Idle window before the pooled BROWSER PROCESS is closed, as opposed to
+   * browserIdleTimeoutMs (which evicts pooled CONTEXTS). The context TTL is
+   * deliberately short (60 s) so a burst of fetches reuses one context; the
+   * process TTL is longer (5 min) so a search burst does not pay a browser
+   * relaunch per query. The Chromium process tree is ~1.2 GB resident, so
+   * closing it after the daemon goes quiet is the single largest memory
+   * reclaim available. 0 disables the close (the browser stays resident
+   * forever, the previous behaviour). */
+  browserProcessIdleTimeoutMs: number;
   browserFallbackThreshold: number;
   authStatePath: string | null;
   chromeProfilePath: string | null;
@@ -127,8 +137,15 @@ export interface Config {
   githubToken: string | null;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   logFormat: 'json' | 'text';
-  reranker: 'onnx' | 'none' | 'custom';
+  reranker: 'onnx' | 'none' | 'custom' | 'remote' | 'decision' | 'jev';
   rerankerModel: string;
+  /**
+   * Base URL for a hosted reranker (`reranker: 'remote'`). Workers AI shape:
+   * `https://api.cloudflare.com/client/v4/accounts/<id>/ai/run/@cf/baai/bge-reranker-base`.
+   */
+  rerankerBaseUrl: string | null;
+  /** Bearer token for the hosted reranker. */
+  rerankerApiKey: string | null;
   rerankerMaxLength: number;
   rerankerReadyTimeoutMs: number;
   rerankerRequestTimeoutMs: number;
@@ -146,6 +163,40 @@ export interface Config {
   multiQueryConcurrency: number;
   multiQueryMax: number;
   embeddingModel: string;
+  /**
+   * Where embeddings are computed.
+   *
+   * `local` runs fastembed in-process (a native ONNX session, ~290 MB
+   * resident). `openai-compatible` calls a hosted `/embeddings` endpoint
+   * instead, which drops that to zero at the cost of a network round-trip and
+   * a per-token charge.
+   *
+   * The default hosted model, Cloudflare's `@cf/baai/bge-small-en-v1.5`, is
+   * the SAME model the local path runs (384 dims), so switching to it leaves
+   * already-cached vectors valid — no re-index. A different-dimension model
+   * cannot be used without re-indexing the sqlite-vec store.
+   */
+  embeddingProvider: 'local' | 'openai-compatible';
+  /** Base URL for the hosted embeddings API, e.g.
+   * `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`. */
+  embeddingBaseUrl: string | null;
+  /** Bearer token for the hosted embeddings API. */
+  embeddingApiKey: string | null;
+  /**
+   * Width of the vector index. NOT configurable: `vec_documents.embedding` is
+   * declared `float[384]` in migration 001 and `upsert` performs no length
+   * check, so a different width cannot be stored — it would silently corrupt
+   * nearest-neighbour results. A hosted model that is natively wider must be
+   * asked for this width via the `dimensions` request parameter, or not used.
+   */
+  embeddingDim: number;
+  /**
+   * Idle window before the native embedding session is released.
+   *
+   * The session parks ~300 MB of native memory that the JS heap does not
+   * own, so it survives until something explicitly releases it. Without an
+   * idle window a daemon that served one request holds that memory for its
+   * whole lifetime. 0 disables eviction (the session stays resident). */
   embeddingIdleTimeoutMs: number;
   embeddingMaxTextLength: number;
   /**
@@ -386,8 +437,9 @@ function envStr(
   fallback: string | null,
   settings: Record<string, unknown>,
   settingsKey?: string,
+  aliases: string[] = [],
 ): string | null {
-  const envVal = process.env[key];
+  const envVal = process.env[key] ?? firstDefined(aliases);
   if (envVal !== undefined) return envVal;
   const sk = settingsKey ?? key;
   const persisted = settings[sk];
@@ -395,13 +447,23 @@ function envStr(
   return fallback;
 }
 
+/** First defined value among legacy env names, so a rename can stay compatible. */
+function firstDefined(names: string[]): string | undefined {
+  for (const n of names) {
+    const v = process.env[n];
+    if (v !== undefined) return v;
+  }
+  return undefined;
+}
+
 function envInt(
   key: string,
   fallback: number,
   settings: Record<string, unknown>,
   settingsKey?: string,
+  aliases: string[] = [],
 ): number {
-  const envVal = process.env[key];
+  const envVal = process.env[key] ?? firstDefined(aliases);
   if (envVal !== undefined) {
     const parsed = parseInt(envVal, 10);
     return isNaN(parsed) ? fallback : parsed;
@@ -546,6 +608,15 @@ export function applyHardcorePreset(cfg: Config, settings: Record<string, unknow
  */
 const TLS_BROWSER_PATTERN = /^(chrome|firefox|safari|edge|opera)_\d+$/;
 
+/**
+ * Width of the sqlite-vec index. Fixed by DDL — `vec_documents.embedding` is
+ * declared `float[384]` in migration 001 and in the migration runner, and
+ * `SqliteVecStore.upsert` does not length-check. Keep these in lockstep; a
+ * mismatch here would let a differently-sized vector reach a fixed-width
+ * column and silently corrupt nearest-neighbour results.
+ */
+const VECTOR_INDEX_DIM = 384;
+
 export function validateTlsBrowser(raw: string | null | undefined, fallback: string): string {
   if (!raw) return fallback;
   if (TLS_BROWSER_PATTERN.test(raw)) return raw;
@@ -640,6 +711,16 @@ export function getConfig(): Config {
     validateTimeoutMs: envInt('VALIDATE_TIMEOUT_MS', 5000, settings, 'validateTimeoutMs'),
     maxBrowsers: envInt('MAX_BROWSERS', 3, settings, 'maxBrowsers'),
     browserIdleTimeoutMs: envInt('BROWSER_IDLE_TIMEOUT', 60000, settings, 'browserIdleTimeoutMs'),
+    // Canonical name is WIGOLO_-prefixed like every other browser knob
+    // (WIGOLO_BROWSER_CHANNEL / _HEADFUL / _TYPES / _WINDOWLESS). The bare name
+    // is kept as an alias so an existing config keeps working.
+    browserProcessIdleTimeoutMs: envInt(
+      'WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT',
+      300000,
+      settings,
+      'browserProcessIdleTimeoutMs',
+      ['BROWSER_PROCESS_IDLE_TIMEOUT'],
+    ),
     browserFallbackThreshold: envInt('BROWSER_FALLBACK_THRESHOLD', 3, settings, 'browserFallbackThreshold'),
     authStatePath: envStr('WIGOLO_AUTH_STATE_PATH', null, settings, 'authStatePath'),
     chromeProfilePath: envStr('WIGOLO_CHROME_PROFILE_PATH', null, settings, 'chromeProfilePath'),
@@ -684,9 +765,16 @@ export function getConfig(): Config {
         );
         return 'onnx';
       }
+      // The TUI's reranker control is a boolean toggle, and propagation writes
+      // it as the string 'true'/'false'. Left unmapped, 'true' is not a scoring
+      // mode and would SILENTLY disable reranking.
+      if (raw === 'true') return 'onnx';
+      if (raw === 'false') return 'none';
       return raw as Config['reranker'];
     })(),
     rerankerModel: envStr('WIGOLO_RERANKER_MODEL', 'bge-reranker-v2-m3', settings, 'rerankerModel') ?? 'bge-reranker-v2-m3',
+    rerankerBaseUrl: envStr('WIGOLO_RERANKER_BASE_URL', null, settings, 'rerankerBaseUrl'),
+    rerankerApiKey: envStr('WIGOLO_RERANKER_API_KEY', null, settings, 'rerankerApiKey'),
     rerankerMaxLength: envInt('WIGOLO_RERANKER_MAX_LENGTH', 512, settings, 'rerankerMaxLength'),
     rerankerReadyTimeoutMs: envInt('WIGOLO_RERANKER_READY_TIMEOUT_MS', 60_000, settings, 'rerankerReadyTimeoutMs'),
     rerankerRequestTimeoutMs: envInt('WIGOLO_RERANKER_REQUEST_TIMEOUT_MS', 30_000, settings, 'rerankerRequestTimeoutMs'),
@@ -724,7 +812,27 @@ export function getConfig(): Config {
     multiQueryConcurrency: envInt('WIGOLO_MULTI_QUERY_CONCURRENCY', 5, settings, 'multiQueryConcurrency'),
     multiQueryMax: envInt('WIGOLO_MULTI_QUERY_MAX', 10, settings, 'multiQueryMax'),
     embeddingModel: envStr('WIGOLO_EMBEDDING_MODEL', 'BAAI/bge-small-en-v1.5', settings, 'embeddingModel') ?? 'BAAI/bge-small-en-v1.5',
-    embeddingIdleTimeoutMs: envInt('WIGOLO_EMBEDDING_IDLE_TIMEOUT', 1800000, settings, 'embeddingIdleTimeoutMs'),
+    embeddingProvider: (() => {
+      const raw = (envStr('WIGOLO_EMBEDDING_PROVIDER', 'local', settings, 'embeddingProvider') ?? 'local').toLowerCase();
+      if (raw === 'local' || raw === 'openai-compatible') return raw;
+      return 'local';
+    })(),
+    embeddingBaseUrl: envStr('WIGOLO_EMBEDDING_BASE_URL', null, settings, 'embeddingBaseUrl'),
+    embeddingApiKey: envStr('WIGOLO_EMBEDDING_API_KEY', null, settings, 'embeddingApiKey'),
+    // Derived from the DDL (`vec_documents.embedding float[384]`), not a knob.
+    // Exposing it as an env var could only ever accept one valid value while
+    // letting a user set an impossible one.
+    embeddingDim: VECTOR_INDEX_DIM,
+    // The reranker sibling is WIGOLO_RERANKER_IDLE_TIMEOUT_MS; accept that
+    // suffix here too so the two families read the same. The unsuffixed name
+    // stays canonical because it predates this change.
+    embeddingIdleTimeoutMs: envInt(
+      'WIGOLO_EMBEDDING_IDLE_TIMEOUT',
+      600000,
+      settings,
+      'embeddingIdleTimeoutMs',
+      ['WIGOLO_EMBEDDING_IDLE_TIMEOUT_MS'],
+    ),
     embeddingMaxTextLength: envInt('WIGOLO_EMBEDDING_MAX_TEXT_LENGTH', 8000, settings, 'embeddingMaxTextLength'),
     searchBackend: envStr('WIGOLO_SEARCH', null, settings, 'searchBackend'),
     llmProvider: envStr('WIGOLO_LLM_PROVIDER', null, settings, 'llmProvider'),

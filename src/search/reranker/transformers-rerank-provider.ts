@@ -11,6 +11,7 @@ import type {
 } from '../../providers/rerank-provider.js';
 import { createLogger } from '../../logger.js';
 import { getConfig } from '../../config.js';
+import { IdleEvictor } from '../../providers/idle-evictor.js';
 
 const log = createLogger('reranker');
 
@@ -52,6 +53,8 @@ export class TransformersRerankProvider implements RerankProvider {
   private tokenizer: Tokenizer | null = null;
   private model: Model | null = null;
   private loadPromise: Promise<{ tokenizer: Tokenizer; model: Model }> | null = null;
+  /** Number of reranks currently running — eviction defers while non-zero. */
+  private inFlight = 0;
   readonly modelId: string;
 
   constructor() {
@@ -81,6 +84,7 @@ export class TransformersRerankProvider implements RerankProvider {
       .then(([tokenizer, model]) => {
         this.tokenizer = tokenizer;
         this.model = model;
+        this.evictor.touch();
         return { tokenizer, model };
       })
       .catch((err: unknown) => {
@@ -99,36 +103,51 @@ export class TransformersRerankProvider implements RerankProvider {
     if (candidates.length === 0) return [];
 
     const { tokenizer, model } = await this.load();
+    this.inFlight++;
+    try {
+      // Build batch: query repeated against each document.
+      const queries = candidates.map(() => query);
+      const docs = candidates.map((c) => c.text);
 
-    // Build batch: query repeated against each document.
-    const queries = candidates.map(() => query);
-    const docs = candidates.map((c) => c.text);
+      const inputs = tokenizer(queries, {
+        text_pair: docs,
+        padding: true,
+        truncation: true,
+      });
 
-    const inputs = tokenizer(queries, {
-      text_pair: docs,
-      padding: true,
-      truncation: true,
-    });
+      const outputs = (await model(inputs)) as { logits: LogitsTensor };
+      const logits = outputs.logits;
+      // logits shape is [batch, 1] for single-label regression rerankers.
+      // For multi-label heads (rare for rerankers) we still take the first
+      // value as the relevance score.
+      const stride = logits.dims.length >= 2 ? logits.dims[1] : 1;
+      const data = logits.data;
 
-    const outputs = (await model(inputs)) as { logits: LogitsTensor };
-    const logits = outputs.logits;
-    // logits shape is [batch, 1] for single-label regression rerankers.
-    // For multi-label heads (rare for rerankers) we still take the first
-    // value as the relevance score.
-    const stride = logits.dims.length >= 2 ? logits.dims[1] : 1;
-    const data = logits.data;
+      const scored: RerankResult[] = candidates.map((c, i) => ({
+        id: c.id,
+        score: Number(data[i * stride]),
+      }));
 
-    const scored: RerankResult[] = candidates.map((c, i) => ({
-      id: c.id,
-      score: Number(data[i * stride]),
-    }));
-
-    return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+      return scored.sort((a, b) => b.score - a.score).slice(0, topK);
+    } finally {
+      this.inFlight--;
+      this.evictor.touch();
+    }
   }
 
-  // Release the underlying ONNX session before process exit. Without this,
-  // the runtime's worker threads race during C++ destructor teardown and
-  // surface as `mutex lock failed: Invalid argument` on macOS.
+  /**
+   * Release the underlying ONNX session.
+   *
+   * Used both at process exit and by the idle evictor. When the idle evictor
+   * calls this, the provider INSTANCE is kept (the factory cache still points
+   * at it) so the next rerank() re-enters load() and transparently reloads
+   * the model — dropping the instance instead would let a second session be
+   * created while the first was still referenced.
+   *
+   * Without an explicit release, the runtime's worker threads race during
+   * C++ destructor teardown and surface as `mutex lock failed: Invalid
+   * argument` on macOS.
+   */
   async dispose(): Promise<void> {
     const model = this.model;
     this.model = null;
@@ -142,4 +161,16 @@ export class TransformersRerankProvider implements RerankProvider {
       log.debug('reranker dispose failed', { error: err instanceof Error ? err.message : String(err) });
     }
   }
+
+  /**
+   * Idle eviction for the ONNX session. The window is read at arm time;
+   * `rerankerIdleTimeoutMs` of 0 disables eviction.
+   */
+  private readonly evictor = new IdleEvictor({
+    idleMs: () => getConfig().rerankerIdleTimeoutMs,
+    isBusy: () => this.inFlight > 0,
+    onEvict: () => {
+      void this.dispose();
+    },
+  });
 }

@@ -9,7 +9,9 @@ import {
   getAllEmbeddings,
   normalizeUrl,
 } from '../cache/store.js';
-import { FastembedEmbedProvider } from './fastembed-provider.js';
+import { createEmbedProvider } from '../providers/embed-provider.js';
+import { releaseEmbedModel } from './fastembed-provider.js';
+import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('embedding');
@@ -63,7 +65,7 @@ export class EmbeddingService {
   private latchedOff = false;
 
   constructor(provider?: EmbedProvider) {
-    this.provider = provider ?? new FastembedEmbedProvider();
+    this.provider = provider ?? createEmbedProvider();
   }
 
   /**
@@ -127,9 +129,13 @@ export class EmbeddingService {
 
   private async loadProvider(): Promise<boolean> {
     this.loadAttempts += 1;
-    log.info('loading embedding model (first use — downloads ~30MB if not cached)', {
-      attempt: this.loadAttempts,
-    });
+    const backend = getConfig().embeddingProvider;
+    log.info(
+      backend === 'openai-compatible'
+        ? 'probing hosted embedding provider (first use)'
+        : 'loading embedding model (first use — downloads ~30MB if not cached)',
+      { attempt: this.loadAttempts, backend },
+    );
     try {
       await this.provider.embed(['embedding service probe']);
       this.providerVerified = true;
@@ -310,6 +316,9 @@ export class EmbeddingService {
       this.loadAttempts = 0;
       this.lastFailureAt = 0;
       this.latchedOff = false;
+      // Release the native ONNX session — it is the largest native
+      // allocation in the process and is not reclaimed by the JS heap.
+      releaseEmbedModel();
       log.info('EmbeddingService shut down');
     } catch (err) {
       log.error('EmbeddingService shutdown error', { error: String(err) });

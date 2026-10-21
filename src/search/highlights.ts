@@ -1,6 +1,7 @@
 import type { SearchResultItem, Citation, Highlight } from '../types.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { getConfig } from '../config.js';
+import { rerankerActive } from './rerank-mode.js';
 import { createLogger } from '../logger.js';
 import { parseHeadings, lineStartCharOffsets } from '../extraction/markdown.js';
 
@@ -151,7 +152,7 @@ export async function extractHighlights(
   }
 
   const cfg = getConfig();
-  if (cfg.reranker === 'onnx') {
+  if (rerankerActive()) {
     try {
       const provider = await getRerankProvider();
       const scored = await provider.rerank(

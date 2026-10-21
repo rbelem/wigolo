@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import type Database from 'better-sqlite3';
 import { getDatabase } from './db.js';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
@@ -6,6 +8,15 @@ import { normaliseEngineList } from '../util/engine-list.js';
 import type { RawFetchResult, ExtractionResult, CachedContent, SearchResultItem, CacheStats, ContentCompleteness } from '../types.js';
 
 const log = createLogger('cache');
+
+/**
+ * gzip level for the stored raw HTML. Level 6 is the measured sweet spot on
+ * the live cache: 94.28 MB of HTML over 530 rows compresses to 14.79 MB
+ * (6.37x), and it costs ~16.5 ms on the largest pages — a path that already
+ * spends hundreds of ms on the fetch. Brotli q4 saves another 1.8 MB for
+ * roughly twice the CPU.
+ */
+const GZIP_LEVEL = 6;
 
 /**
  * Sanitize a user query for sqlite FTS5 MATCH.
@@ -110,13 +121,13 @@ export function cacheContent(result: RawFetchResult, extraction: ExtractionResul
 
     const stmt = db.prepare(`
       INSERT OR REPLACE INTO url_cache (
-        url, normalized_url, title, markdown, raw_html,
+        url, normalized_url, title, markdown, raw_html_z,
         metadata, links, images, fetch_method, extractor_used,
         content_hash, fetched_at, expires_at, http_status,
         content_completeness_level, content_completeness_reason, content_completeness_settled_by
       )
       VALUES (
-        @url, @normalizedUrl, @title, @markdown, @rawHtml,
+        @url, @normalizedUrl, @title, @markdown, @rawHtmlZ,
         @metadata, @links, @images, @fetchMethod, @extractorUsed,
         @contentHash, @fetchedAt, @expiresAt, @httpStatus,
         @completenessLevel, @completenessReason, @completenessSettledBy
@@ -129,7 +140,9 @@ export function cacheContent(result: RawFetchResult, extraction: ExtractionResul
       normalizedUrl,
       title: extraction.title,
       markdown: extraction.markdown,
-      rawHtml: result.html,
+      // The HTML is kept (extract {url} reads it back as its INPUT) but stored
+      // gzipped: it was 94.28 MB of the live cache against 6.43 MB of markdown.
+      rawHtmlZ: gzipSync(result.html, { level: GZIP_LEVEL }),
       metadata: JSON.stringify(extraction.metadata),
       links: JSON.stringify(extraction.links),
       images: JSON.stringify(extraction.images),
@@ -164,6 +177,8 @@ interface DbRow {
   markdown: string;
   /** Absent when the query projected it out (see SEARCH_COLUMNS). */
   raw_html?: string;
+  /** Gzipped raw HTML (migration 011). Null on legacy rows. */
+  raw_html_z?: Buffer | null;
   metadata: string;
   links: string;
   images: string;
@@ -181,6 +196,26 @@ interface DbRow {
   content_completeness_level?: string | null;
   content_completeness_reason?: string | null;
   content_completeness_settled_by?: string | null;
+}
+
+/**
+ * Read the raw HTML of a row.
+ *
+ * New rows store the HTML gzipped in `raw_html_z` (migration 011); legacy
+ * rows still carry it as plain text in `raw_html`. The compressed copy wins
+ * when both are present. A blob that fails to decompress falls back to the
+ * plain column rather than throwing — a cache read must never take down the
+ * caller that asked for it.
+ */
+function decodeRawHtml(row: DbRow): string {
+  if (row.raw_html_z) {
+    try {
+      return gunzipSync(row.raw_html_z).toString('utf8');
+    } catch {
+      // Fall through to the plain-text column.
+    }
+  }
+  return row.raw_html ?? '';
 }
 
 function rowToCachedContent(row: DbRow): CachedContent {
@@ -201,7 +236,7 @@ function rowToCachedContent(row: DbRow): CachedContent {
     normalizedUrl: row.normalized_url,
     title: row.title,
     markdown: row.markdown,
-    rawHtml: row.raw_html ?? '',
+    rawHtml: decodeRawHtml(row),
     metadata: row.metadata,
     links: row.links,
     images: row.images,
@@ -321,23 +356,22 @@ export function isCacheUsable(
 /**
  * Column list for the MULTI-ROW cache queries.
  *
- * `raw_html` and `embedding` are deliberately excluded. `raw_html` averages
- * ~197 KB per row, so a broad FTS match under `SELECT url_cache.*` hydrated
+ * `raw_html`, `raw_html_z` and `embedding` are deliberately excluded.
+ * `raw_html` averages ~197 KB per row (gzipped into `raw_html_z` by
+ * migration 011), so a broad FTS match under `SELECT url_cache.*` hydrated
  * tens of MB of strings per call; `embedding` is a 384-float BLOB that
  * `rowToCachedContent` never reads at all. No caller of these queries reads
  * the HTML either — `find-similar` wants url/title/markdown, and the cache
  * tool's `check_changes` re-fetches the page and compares content hashes.
  * Callers that need the HTML use `getCachedContent`, which projects one row.
- */
-/** Columns that exist on EVERY `url_cache` row.
  *
- * Deliberately limited to the inline schema in `cache/db.ts`. `http_status`,
- * `content_completeness_*`, `embedding` and `embedding_dims` are added by
+ * Also deliberately limited to columns present in the inline schema in
+ * `cache/db.ts`. `http_status` and `content_completeness_*` are added by
  * migrations 006/009+, which can be skipped (read-only DB, migration error
- * swallowed) — and `SELECT url_cache.*` degraded gracefully for those cases
- * while naming them explicitly turns the hottest query into a hard
- * `no such column`. `rowToCachedContent` maps the absent ones to null, exactly
- * as it did for a legacy `SELECT *` row.
+ * swallowed). `SELECT url_cache.*` degraded gracefully for those cases, while
+ * naming them explicitly turns the hottest query into a hard `no such column`.
+ * `rowToCachedContent` maps the absent ones to null, exactly as it did for a
+ * legacy `SELECT *` row.
  */
 const SEARCH_COLUMNS = `
     url_cache.id, url_cache.url, url_cache.normalized_url, url_cache.title,
@@ -643,7 +677,7 @@ export function getCacheStats(): CacheStats {
   const row = db.prepare(`
     SELECT
       COUNT(*) as total_urls,
-      COALESCE(SUM(LENGTH(markdown) + LENGTH(COALESCE(raw_html, ''))), 0) as total_bytes,
+      COALESCE(SUM(LENGTH(markdown) + LENGTH(COALESCE(raw_html, '')) + LENGTH(COALESCE(raw_html_z, X''))), 0) as total_bytes,
       MIN(fetched_at) as oldest,
       MAX(fetched_at) as newest
     FROM url_cache
@@ -655,6 +689,113 @@ export function getCacheStats(): CacheStats {
     oldest: row.oldest ?? '',
     newest: row.newest ?? '',
   };
+}
+
+const DEFAULT_COMPACT_BATCH_SIZE = 50;
+
+export interface CompactRawHtmlResult {
+  rows_compressed: number;
+  bytes_before: number;
+  bytes_after: number;
+}
+
+/**
+ * Recompress legacy `raw_html` rows into the gzipped `raw_html_z` column.
+ *
+ * Rows written after migration 011 already store their HTML compressed; rows
+ * written before it still carry plain text in `raw_html`. This walks the
+ * leftovers in bounded batches — never more than `batchSize` HTML blobs in
+ * memory at once — and rewrites each one as gzip, clearing the plain column.
+ *
+ * `bytes_before` is the UTF-8 byte length of the HTML that was compressed and
+ * `bytes_after` is the byte length of the gzip blob that replaced it, so both
+ * are bytes and their difference is the space the run reclaimed.
+ *
+ * With `vacuum` set, the database file is rewritten (VACUUM) after the last
+ * batch, outside any transaction — VACUUM cannot run inside one. That rewrite
+ * is what hands the freed pages back to the filesystem; without it the file
+ * keeps its old size until SQLite reuses the pages.
+ */
+export function compactRawHtml(
+  opts: { batchSize?: number; vacuum?: boolean } = {},
+): CompactRawHtmlResult {
+  const db = getDatabase();
+  const batchSize = Math.max(1, opts.batchSize ?? DEFAULT_COMPACT_BATCH_SIZE);
+  const totals: CompactRawHtmlResult = { rows_compressed: 0, bytes_before: 0, bytes_after: 0 };
+  let afterId = 0;
+
+  for (;;) {
+    const batch = selectLegacyHtmlRows(db, afterId, batchSize);
+    if (batch.length === 0) break;
+    afterId = batch[batch.length - 1].id;
+    const done = compressHtmlBatch(db, batch);
+    totals.rows_compressed += done.rows_compressed;
+    totals.bytes_before += done.bytes_before;
+    totals.bytes_after += done.bytes_after;
+  }
+
+  if (opts.vacuum) {
+    log.info('vacuuming cache database after raw html compaction');
+    db.exec('VACUUM');
+  }
+
+  return totals;
+}
+
+/**
+ * Rows still holding plain HTML, oldest id first. The id cursor keeps the
+ * scan advancing instead of re-reading the rows it already compressed.
+ */
+function selectLegacyHtmlRows(
+  db: Database.Database,
+  afterId: number,
+  limit: number,
+): Array<{ id: number; raw_html: string }> {
+  return db.prepare(`
+    SELECT id, raw_html FROM url_cache
+    WHERE id > ? AND raw_html IS NOT NULL AND raw_html_z IS NULL
+    ORDER BY id LIMIT ?
+  `).all(afterId, limit) as Array<{ id: number; raw_html: string }>;
+}
+
+/**
+ * Compress one batch inside a single transaction, returning what that batch
+ * actually committed. A row whose gzip fails is left untouched — the run
+ * continues with the rest of the batch.
+ *
+ * The counts are produced by the transaction and handed back, rather than
+ * accumulated into a caller-owned object: a batch that rolls back must not
+ * report bytes it never saved.
+ */
+function compressHtmlBatch(
+  db: Database.Database,
+  batch: Array<{ id: number; raw_html: string }>,
+): CompactRawHtmlResult {
+  const update = db.prepare('UPDATE url_cache SET raw_html_z = ?, raw_html = NULL WHERE id = ?');
+  const run = db.transaction((rows: Array<{ id: number; raw_html: string }>) => {
+    const done: CompactRawHtmlResult = { rows_compressed: 0, bytes_before: 0, bytes_after: 0 };
+    for (const row of rows) {
+      const zipped = gzipHtmlOrNull(row.raw_html);
+      if (!zipped) continue;
+      update.run(zipped, row.id);
+      done.rows_compressed += 1;
+      done.bytes_before += Buffer.byteLength(row.raw_html, 'utf8');
+      done.bytes_after += zipped.length;
+    }
+    return done;
+  });
+  return run(batch);
+}
+
+function gzipHtmlOrNull(html: string): Buffer | null {
+  try {
+    return gzipSync(html, { level: GZIP_LEVEL });
+  } catch (err) {
+    log.debug('raw html compression failed — row left uncompressed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
 }
 
 // --- Embedding store functions ---

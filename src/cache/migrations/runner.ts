@@ -179,6 +179,15 @@ const CONTENT_COMPLETENESS_COLUMNS = [
 // the whole effect is the guarded ADD COLUMN in the postStep (mirrors 008).
 const MIGRATION_010_CLEARANCE_ROUTE = '';
 
+// Gzipped raw-HTML column on url_cache. `raw_html` held 94.28 MB of the live
+// cache against 6.43 MB of extracted markdown; the HTML is still needed (the
+// extract tool reads it back as its INPUT) so it moves into `raw_html_z`
+// instead of being dropped. Empty SQL — the whole effect is the guarded ADD
+// COLUMN in the postStep (mirrors 009). The mirrored .sql file is a plain
+// `ALTER TABLE url_cache ADD COLUMN raw_html_z BLOB`; no VACUUM, since the
+// runner wraps every migration in a transaction.
+const MIGRATION_011_RAW_HTML_Z = '';
+
 export const MIGRATIONS: Migration[] = [
   { name: '001-sqlite-vec', sql: MIGRATION_001_SQLITE_VEC, requiresVec: true },
   { name: '002-feed-items', sql: MIGRATION_002_FEED_ITEMS },
@@ -285,6 +294,25 @@ export const MIGRATIONS: Migration[] = [
       const names = new Set(cols.map((c) => c.name));
       if (!names.has('solved_route')) {
         db.exec('ALTER TABLE domain_routing ADD COLUMN solved_route TEXT');
+      }
+    },
+  },
+  {
+    name: '011-raw-html-z',
+    sql: MIGRATION_011_RAW_HTML_Z,
+    /**
+     * Adds the nullable gzip blob column to url_cache, skipping it if already
+     * present (idempotent) — mirrors the 009 postStep. url_cache is created
+     * inline by initDatabase(); the runner-only harness skips that, so guard
+     * on an empty table_info (no table → no-op, the column arrives with the
+     * table on the next initDatabase).
+     */
+    postStep: (db) => {
+      const cols = db.pragma('table_info(url_cache)') as Array<{ name: string }>;
+      if (cols.length === 0) return;
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has('raw_html_z')) {
+        db.exec('ALTER TABLE url_cache ADD COLUMN raw_html_z BLOB');
       }
     },
   },

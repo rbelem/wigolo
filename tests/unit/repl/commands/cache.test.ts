@@ -42,6 +42,22 @@ describe('executeCache', () => {
     expect(handleCache).toHaveBeenCalledWith(expect.objectContaining({ stats: true }));
   });
 
+  it('routes "cache compact" to compact=true', async () => {
+    const output: CacheOutput = {
+      compacted: { rows_compressed: 2, bytes_before: 1000, bytes_after: 200 },
+    };
+    vi.mocked(handleCache).mockResolvedValue(output);
+    const result = await executeCache({ command: 'cache', positional: ['compact'], flags: {} });
+    expect(handleCache).toHaveBeenCalledWith(expect.objectContaining({ compact: true }));
+    expect(result).toEqual(output);
+  });
+
+  it('routes "cache compact --vacuum" to vacuum=true without a bridge error', async () => {
+    vi.mocked(handleCache).mockResolvedValue({ compacted: { rows_compressed: 0, bytes_before: 0, bytes_after: 0 } });
+    await executeCache({ command: 'cache', positional: ['compact'], flags: { vacuum: 'true' } });
+    expect(handleCache).toHaveBeenCalledWith(expect.objectContaining({ compact: true, vacuum: true }));
+  });
+
   it('handles handler exceptions', async () => {
     vi.mocked(handleCache).mockRejectedValue(new Error('DB error'));
     const result = await executeCache({ command: 'cache', positional: ['stats'], flags: {} });

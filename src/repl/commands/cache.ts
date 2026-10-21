@@ -12,7 +12,12 @@ export async function executeCache(args: ParsedArgs): Promise<CacheOutput> {
 
     let input: CacheInput;
 
-    if (subcommand === 'stats' || (!subcommand && !args.flags.query)) {
+    if (subcommand === 'compact' || args.flags.compact !== undefined) {
+      input = {
+        compact: true,
+        vacuum: args.flags.vacuum === 'true' || args.flags.vacuum === '',
+      };
+    } else if (subcommand === 'stats' || (!subcommand && !args.flags.query)) {
       input = { stats: true };
     } else if (subcommand === 'clear') {
       input = {
@@ -40,7 +45,9 @@ export async function executeCache(args: ParsedArgs): Promise<CacheOutput> {
     // query/url-pattern/since are consumed above; subcommands map positionally.
     // Remaining schema flags (mode, limit, check-changes, max-tokens-out) and any
     // typo validate through the bridge; already-set curated keys win.
-    const consumed = new Set(['query', 'url-pattern', 'since', 'clear', 'stats']);
+    // compact/vacuum are consumed here: they are subcommand flags, not schema
+    // properties, so the bridge would reject them as unknown.
+    const consumed = new Set(['query', 'url-pattern', 'since', 'clear', 'stats', 'compact', 'vacuum']);
     const rest: Record<string, string> = {};
     for (const [k, v] of Object.entries(args.flags)) {
       if (!consumed.has(k)) rest[k] = v;

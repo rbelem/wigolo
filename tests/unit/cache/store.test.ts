@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
+import { initDatabase, closeDatabase, getDatabase } from '../../../src/cache/db.js';
 import {
   normalizeUrl,
   cacheContent,
@@ -14,6 +14,7 @@ import {
   getHashForNormalizedUrl,
   getMarkdownForNormalizedUrl,
   getHashAndStatusForNormalizedUrl,
+  compactRawHtml,
 } from '../../../src/cache/store.js';
 import type { RawFetchResult, ExtractionResult, CachedContent } from '../../../src/types.js';
 import type { SearchResultItem } from '../../../src/types.js';
@@ -224,6 +225,200 @@ describe('cacheContent + getCachedContent', () => {
     cacheContent(makeRaw(url), makeExtraction());
     const result = getCachedContent(url);
     expect(result!.contentCompleteness).toBeUndefined();
+  });
+});
+
+describe('compressed raw HTML (migration 011)', () => {
+  beforeEach(() => {
+    initDatabase(':memory:');
+  });
+
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  it('round-trips the raw HTML byte-identically', () => {
+    const url = 'https://example.com/compressed';
+    // Non-ASCII included so the assertion proves the UTF-8 bytes survive the
+    // gzip/gunzip round trip, not just that some string came back.
+    const html = '<html><body><h1>héllo — ✓</h1>' + 'y'.repeat(200_000) + '</body></html>';
+    cacheContent({ ...makeRaw(url), html }, makeExtraction());
+
+    const result = getCachedContent(url);
+    expect(result).not.toBeNull();
+    expect(result!.rawHtml).toBe(html);
+  });
+
+  it('stores the HTML gzipped in raw_html_z and leaves raw_html NULL', () => {
+    const url = 'https://example.com/storage-shape';
+    const html = '<html><body>shape</body></html>';
+    cacheContent({ ...makeRaw(url), html }, makeExtraction());
+
+    const row = getDatabase()
+      .prepare('SELECT raw_html, raw_html_z FROM url_cache WHERE url = ?')
+      .get(url) as { raw_html: string | null; raw_html_z: Buffer | null };
+    expect(row.raw_html).toBeNull();
+    expect(Buffer.isBuffer(row.raw_html_z)).toBe(true);
+  });
+
+  it('reads a legacy row that has raw_html set and raw_html_z NULL', () => {
+    const url = 'https://example.com/legacy-row';
+    const html = '<html><body>legacy markup</body></html>';
+    getDatabase()
+      .prepare(
+        `INSERT INTO url_cache (url, normalized_url, title, markdown, raw_html, fetched_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
+      )
+      .run(url, url, 'Legacy', '# legacy', html);
+
+    const row = getDatabase()
+      .prepare('SELECT raw_html_z FROM url_cache WHERE url = ?')
+      .get(url) as { raw_html_z: Buffer | null };
+    expect(row.raw_html_z).toBeNull();
+
+    const result = getCachedContent(url);
+    expect(result).not.toBeNull();
+    expect(result!.rawHtml).toBe(html);
+  });
+
+  it('falls back to raw_html when the compressed blob cannot be decompressed', () => {
+    const url = 'https://example.com/corrupt-blob';
+    const html = '<html><body>fallback</body></html>';
+    cacheContent({ ...makeRaw(url), html }, makeExtraction());
+    getDatabase()
+      .prepare('UPDATE url_cache SET raw_html_z = ?, raw_html = ? WHERE url = ?')
+      .run(Buffer.from('not gzip data'), html, url);
+
+    const result = getCachedContent(url);
+    expect(result).not.toBeNull();
+    expect(result!.rawHtml).toBe(html);
+  });
+
+  it('does not hydrate the HTML on the multi-row search path', () => {
+    const url = 'https://example.com/search-projection';
+    const html = '<html><body>' + 'z'.repeat(200_000) + '</body></html>';
+    cacheContent(
+      { ...makeRaw(url), html },
+      makeExtraction({ title: 'SearchProjectionTarget' }),
+    );
+
+    const results = searchCacheFiltered({ query: 'SearchProjectionTarget' });
+    expect(results).toHaveLength(1);
+    expect(results[0].rawHtml).toBe('');
+  });
+
+  it('round-trips a tiny HTML without special-casing', () => {
+    const url = 'https://example.com/tiny';
+    const html = '<p>hi</p>';
+    expect(html.length).toBeLessThan(100);
+
+    cacheContent({ ...makeRaw(url), html }, makeExtraction());
+
+    const result = getCachedContent(url);
+    expect(result).not.toBeNull();
+    expect(result!.rawHtml).toBe(html);
+  });
+});
+
+describe('compactRawHtml', () => {
+  const URLS = [
+    'https://example.com/compact-a',
+    'https://example.com/compact-b',
+    'https://example.com/compact-c',
+  ];
+  const HTMLS = [
+    '<html><body>alpha page ' + 'a'.repeat(5000) + '</body></html>',
+    '<html><body>beta page ' + 'b'.repeat(5000) + '</body></html>',
+    '<html><body>gamma page ' + 'c'.repeat(5000) + '</body></html>',
+  ];
+
+  beforeEach(() => {
+    initDatabase(':memory:');
+  });
+
+  afterEach(() => {
+    closeDatabase();
+  });
+
+  function seedRows(): void {
+    URLS.forEach((url, i) => {
+      cacheContent({ ...makeRaw(url), html: HTMLS[i] }, makeExtraction());
+    });
+  }
+
+  /** Push a row back to the pre-migration-011 shape: plain HTML, no blob. */
+  function forceLegacy(url: string): void {
+    const original = getCachedContent(url)!.rawHtml;
+    getDatabase()
+      .prepare('UPDATE url_cache SET raw_html = ?, raw_html_z = NULL WHERE url = ?')
+      .run(original, url);
+  }
+
+  function rawColumns(url: string): { raw_html: string | null; raw_html_z: Buffer | null } {
+    return getDatabase()
+      .prepare('SELECT raw_html, raw_html_z FROM url_cache WHERE url = ?')
+      .get(url) as { raw_html: string | null; raw_html_z: Buffer | null };
+  }
+
+  it('compresses only the legacy rows and every row still reads back', () => {
+    seedRows();
+    forceLegacy(URLS[0]);
+    forceLegacy(URLS[1]);
+
+    const result = compactRawHtml();
+
+    expect(result.rows_compressed).toBe(2);
+    expect(result.bytes_before).toBe(HTMLS[0].length + HTMLS[1].length);
+    expect(result.bytes_after).toBeGreaterThan(0);
+    expect(result.bytes_after).toBeLessThan(result.bytes_before);
+
+    for (const url of URLS) {
+      const row = rawColumns(url);
+      expect(row.raw_html).toBeNull();
+      expect(Buffer.isBuffer(row.raw_html_z)).toBe(true);
+    }
+
+    URLS.forEach((url, i) => {
+      expect(getCachedContent(url)!.rawHtml).toBe(HTMLS[i]);
+    });
+  });
+
+  it('is idempotent — a second run compresses nothing', () => {
+    seedRows();
+    forceLegacy(URLS[0]);
+    forceLegacy(URLS[1]);
+
+    compactRawHtml();
+    const second = compactRawHtml();
+
+    expect(second.rows_compressed).toBe(0);
+    expect(second.bytes_before).toBe(0);
+    expect(second.bytes_after).toBe(0);
+  });
+
+  it('compresses every legacy row when a batch holds a single row', () => {
+    seedRows();
+    URLS.forEach(forceLegacy);
+
+    const result = compactRawHtml({ batchSize: 1 });
+
+    expect(result.rows_compressed).toBe(3);
+    URLS.forEach((url, i) => {
+      expect(rawColumns(url).raw_html).toBeNull();
+      expect(getCachedContent(url)!.rawHtml).toBe(HTMLS[i]);
+    });
+  });
+
+  it('runs VACUUM outside a transaction and keeps the rows readable', () => {
+    // SQLite refuses VACUUM from inside a transaction, so a throwing run here
+    // means the vacuum was not sequenced outside the batch transactions.
+    seedRows();
+    forceLegacy(URLS[0]);
+
+    const result = compactRawHtml({ vacuum: true });
+
+    expect(result.rows_compressed).toBe(1);
+    expect(getCachedContent(URLS[0])!.rawHtml).toBe(HTMLS[0]);
   });
 });
 

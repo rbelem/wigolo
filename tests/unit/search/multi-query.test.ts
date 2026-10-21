@@ -215,6 +215,71 @@ describe('fanOutSearch', () => {
     const callArgs = vi.mocked(engine.search).mock.calls[0][1] as SearchEngineOptions;
     expect(callArgs.maxResults).toBeGreaterThan(5);
   });
+
+  it('queries every engine when the multi-query expansion produces 3+ queries', async () => {
+    const engines = ['first', 'second', 'plugin'].map(name =>
+      makeMockEngine(name, [
+        { title: `${name} hit`, url: `https://${name}.example/a`, snippet: 's', relevance_score: 0.9, engine: name },
+      ]),
+    );
+
+    const { enginesUsed } = await fanOutSearch(
+      ['q1', 'q2', 'q3', 'q4', 'q5'],
+      engines,
+      { maxResults: 5 },
+    );
+
+    // The engine tail holds late-registered engines such as plugins. Every
+    // engine must be dispatched, regardless of the query count.
+    for (const engine of engines) {
+      expect(engine.search).toHaveBeenCalled();
+    }
+    expect(enginesUsed).toEqual(expect.arrayContaining(['first', 'second', 'plugin']));
+  });
+
+  it('bounds the total fan-out as engines and queries grow', async () => {
+    const engines = Array.from({ length: 9 }, (_, i) =>
+      makeMockEngine(`e${i}`, [
+        { title: `e${i} hit`, url: `https://e${i}.example/a`, snippet: 's', relevance_score: 0.9, engine: `e${i}` },
+      ]),
+    );
+
+    await fanOutSearch(
+      ['q1', 'q2', 'q3', 'q4', 'q5'],
+      engines,
+      { maxResults: 5 },
+    );
+
+    const totalCalls = engines.reduce(
+      (sum, engine) => sum + vi.mocked(engine.search).mock.calls.length,
+      0,
+    );
+    expect(totalCalls).toBeLessThanOrEqual(9 * 3);
+    for (const engine of engines) {
+      expect(engine.search).toHaveBeenCalled();
+    }
+  });
+
+  it('caps queries per engine, so a long query list cannot grow the fan-out', async () => {
+    const engines = ['alpha', 'beta'].map(name =>
+      makeMockEngine(name, [
+        { title: `${name} hit`, url: `https://${name}.example/a`, snippet: 's', relevance_score: 0.9, engine: name },
+      ]),
+    );
+
+    await fanOutSearch(
+      ['q1', 'q2', 'q3', 'q4', 'q5'],
+      engines,
+      { maxResults: 5 },
+    );
+
+    // The fan-out favors head queries when engines are tight: each engine
+    // searches the first queries up to its allowance, not all five.
+    for (const engine of engines) {
+      expect(engine.search).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(engine.search).mock.calls.map(call => call[0])).toEqual(['q1', 'q2', 'q3']);
+    }
+  });
 });
 
 // --- mergeWithRRF tests ---

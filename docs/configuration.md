@@ -88,7 +88,7 @@ For fetching pages behind a login with your own browser session: `WIGOLO_CDP_URL
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (self-hosted Cohere-shape endpoint), `workers-ai` (Cloudflare Workers AI shape), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), `none` (disabled), or reserved `custom`. |
+| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (self-hosted Cohere-shape endpoint), `workers-ai` (Cloudflare Workers AI shape), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), or `none`. |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Model name sent to the remote endpoint; the ONNX model is bundled. |
 | `WIGOLO_RERANK_API_BASE` | unset | `remote` service base URL; Wigolo sends `POST <base>/rerank`. Required for `remote`. |
 | `WIGOLO_RERANK_API_KEY` | unset | Optional Bearer token for the `remote` endpoint. Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain; never persisted in `config.json`. |

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { probeHealth } from '../../../src/daemon/health-check.js';
+import { resetConfig } from '../../../src/config.js';
 import type { HealthProbeInput } from '../../../src/daemon/health-check.js';
 
 function makeInput(overrides?: Partial<HealthProbeInput>): HealthProbeInput {
@@ -183,5 +184,53 @@ describe('probeHealth — sidecar NOT configured (default core backend, D1)', ()
     }));
     expect(report.status).toBe('healthy');
     expect(report.searxng).toBe('not_configured');
+  });
+});
+
+describe('probeHealth — inference reporting', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    for (const k of [
+      'WIGOLO_EMBEDDING_PROVIDER', 'WIGOLO_RERANKER',
+      'WIGOLO_EMBEDDING_BASE_URL', 'WIGOLO_RERANKER_BASE_URL',
+    ]) {
+      delete process.env[k];
+    }
+    resetConfig();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    resetConfig();
+  });
+
+  it('reports the local profile by default', () => {
+    const report = probeHealth(makeInput({ browserPool: {} as any }));
+    expect(report.inference.embedding).toBe('local');
+    expect(report.inference.reranker).toBe('onnx');
+    // Nothing has embedded yet, so no session is resident.
+    expect(report.inference.embed_model_resident).toBe(false);
+  });
+
+  it('reports a hosted profile when configured, with no model resident', () => {
+    process.env.WIGOLO_EMBEDDING_PROVIDER = 'openai-compatible';
+    process.env.WIGOLO_EMBEDDING_BASE_URL = 'https://example.test/v1';
+    process.env.WIGOLO_RERANKER = 'decision';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://example.test/systemone';
+    resetConfig();
+
+    const report = probeHealth(makeInput({ browserPool: {} as any }));
+    expect(report.inference.embedding).toBe('hosted');
+    expect(report.inference.reranker).toBe('decision');
+    // Hosted backends hold no native session, so this must stay false.
+    expect(report.inference.embed_model_resident).toBe(false);
+  });
+
+  it('reports reranking off when configured none', () => {
+    process.env.WIGOLO_RERANKER = 'none';
+    resetConfig();
+    expect(probeHealth(makeInput({ browserPool: {} as any })).inference.reranker).toBe('none');
   });
 });

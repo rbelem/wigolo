@@ -3,7 +3,6 @@ import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
 import {
   sanitizeFtsQuery,
   cacheContent,
-  searchCache,
   searchCacheFiltered,
 } from '../../../src/cache/store.js';
 import type { RawFetchResult, ExtractionResult } from '../../../src/types.js';
@@ -59,9 +58,9 @@ describe('cache searches with dotted version queries', () => {
     return { title, markdown, metadata: {}, links: [], images: [], extractor: 'defuddle' };
   }
 
-  it('searchCache does not throw on version-with-period queries', () => {
+  it('searchCacheFiltered does not throw on version-with-period queries', () => {
     cacheContent(makeRaw('https://example.com/ts'), makeExtracted('TypeScript 5.4', 'TypeScript 5.4 brings narrowing improvements'));
-    expect(() => searchCache('TypeScript 5.4 narrowing')).not.toThrow();
+    expect(() => searchCacheFiltered({ query: 'TypeScript 5.4 narrowing' })).not.toThrow();
   });
 
   it('searchCacheFiltered does not throw on version queries', () => {

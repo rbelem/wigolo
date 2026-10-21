@@ -359,22 +359,17 @@ const SEARCH_COLUMNS = `
  * projected row is ~16 KB (vs ~197 KB unprojected), so 1000 rows ≈ 16 MB —
  * less than the 80 MB a single broad query cost before the projection fix.
  */
+/**
+ * How many rows the filtered cache search hydrates by default. See
+ * `SEARCH_COLUMNS` for why the projection is narrow.
+ */
 const FTS_CANDIDATE_LIMIT = 1000;
 
-export function searchCache(query: string, limit = FTS_CANDIDATE_LIMIT): CachedContent[] {
-  const db = getDatabase();
-
-  const rows = db.prepare(`
-    SELECT ${SEARCH_COLUMNS}
-    FROM url_cache
-    JOIN url_cache_fts ON url_cache.id = url_cache_fts.rowid
-    WHERE url_cache_fts MATCH ?
-    ORDER BY url_cache_fts.rank
-    LIMIT ?
-  `).all(sanitizeFtsQuery(query), Math.max(1, Math.floor(limit))) as DbRow[];
-
-  return rows.map(rowToCachedContent);
-}
+// `searchCache` lived here. It hydrated a `CachedContent` per match for a single
+// caller (find-similar) that then filtered by domain and kept 20 — which both
+// truncated the stream before the domain narrowing and materialised ~50x more
+// markdown than was read. find-similar now ranks URLs via `ftsSearchRanked` and
+// hydrates only the rows it returns, so the function had no callers left.
 
 export interface CachedSearchResult {
   query: string;

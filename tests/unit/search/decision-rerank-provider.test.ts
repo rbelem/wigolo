@@ -192,4 +192,29 @@ describe('DecisionRerankProvider', () => {
     expect(await new DecisionRerankProvider().rerank('q', [])).toEqual([]);
     expect(captured).toHaveLength(0);
   });
+
+  it('splits a large batch into bounded calls and merges the ranking', async () => {
+    // 60 candidates at MAX_CANDIDATES_PER_CALL=25 -> 25 + 25 + 10.
+    const many = Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, text: `doc ${i}` }));
+    // Score by position within the chunk so the merge is predictable.
+    reply = undefined;
+    captured = [];
+    const out = await (async () => {
+      // Every answer scores mid-bucket; the point is call count + coverage.
+      reply = {
+        answers: Object.fromEntries(
+          Array.from({ length: 25 }, (_, i) => [`r${i}`, { score: 0.5 }]),
+        ),
+      };
+      return new DecisionRerankProvider().rerank('q', many);
+    })();
+
+    expect(captured.length).toBeGreaterThan(1);
+    // No state string exceeds the budget by more than a single document.
+    for (const c of captured) {
+      const qs = Object.keys(c.body.questions as Record<string, unknown>).length;
+      expect(qs).toBeLessThanOrEqual(25);
+    }
+    expect(out.length).toBe(60);
+  });
 });

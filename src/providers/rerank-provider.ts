@@ -40,7 +40,12 @@ let cached: Promise<RerankProvider> | null = null;
  */
 export function isTransientFetchError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|502|503|504|gateway time-?out|request timed? ?out/i.test(
+  const name = err instanceof Error ? err.name : '';
+  // `AbortError` is what a timeout surfaces as. Treating it as deterministic
+  // (the previous behaviour) meant the MOST likely transient failure of a slow
+  // self-hosted endpoint — a timeout — was never retried.
+  if (name === 'AbortError' || name === 'TimeoutError') return true;
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|aborted|502|503|504|gateway time-?out|request timed? ?out|timeout/i.test(
     msg,
   );
 }

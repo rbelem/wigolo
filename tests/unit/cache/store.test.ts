@@ -6,7 +6,6 @@ import {
   getCachedContent,
   isExpired,
   isCacheUsable,
-  searchCache,
   cacheSearchResults,
   getCachedSearchResults,
   getCacheStats,
@@ -285,7 +284,7 @@ describe('isExpired', () => {
   });
 });
 
-describe('searchCache (FTS5)', () => {
+describe('searchCacheFiltered (FTS5)', () => {
   beforeEach(() => {
     initDatabase(':memory:');
   });
@@ -296,7 +295,7 @@ describe('searchCache (FTS5)', () => {
 
   it('finds cached content by keyword in title', () => {
     cacheContent(makeRaw('https://example.com/typescript'), makeExtraction({ title: 'TypeScript Guide' }));
-    const results = searchCache('TypeScript');
+    const results = searchCacheFiltered({ query: 'TypeScript' });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].title).toBe('TypeScript Guide');
   });
@@ -306,27 +305,27 @@ describe('searchCache (FTS5)', () => {
       makeRaw('https://example.com/rust'),
       makeExtraction({ title: 'Rust Intro', markdown: '# Rust\n\nOwnership and borrowing.' })
     );
-    const results = searchCache('borrowing');
+    const results = searchCacheFiltered({ query: 'borrowing' });
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].url).toBe('https://example.com/rust');
   });
 
   it('returns empty array when no match', () => {
     cacheContent(makeRaw('https://example.com/go'), makeExtraction({ title: 'Go Language' }));
-    const results = searchCache('xyzunmatchableterm99');
+    const results = searchCacheFiltered({ query: 'xyzunmatchableterm99' });
     expect(results).toEqual([]);
   });
 
   it('returns multiple results when multiple entries match', () => {
     cacheContent(makeRaw('https://example.com/a'), makeExtraction({ title: 'JavaScript basics' }));
     cacheContent(makeRaw('https://example.com/b'), makeExtraction({ title: 'Advanced JavaScript' }));
-    const results = searchCache('JavaScript');
+    const results = searchCacheFiltered({ query: 'JavaScript' });
     expect(results.length).toBe(2);
   });
 
   it('FTS triggers fire after insert (search works immediately)', () => {
     cacheContent(makeRaw('https://example.com/trigger-test'), makeExtraction({ title: 'TriggerFired' }));
-    const results = searchCache('TriggerFired');
+    const results = searchCacheFiltered({ query: 'TriggerFired' });
     expect(results.length).toBe(1);
   });
 
@@ -339,7 +338,7 @@ describe('searchCache (FTS5)', () => {
       makeExtraction({ title: 'HugePage' }),
     );
 
-    const results = searchCache('HugePage');
+    const results = searchCacheFiltered({ query: 'HugePage' });
     expect(results.length).toBe(1);
     expect(results[0].rawHtml).toBe('');
 
@@ -354,8 +353,8 @@ describe('searchCache (FTS5)', () => {
         makeExtraction({ title: `LimitTarget ${i}` }),
       );
     }
-    expect(searchCache('LimitTarget', 5).length).toBe(5);
-    expect(searchCache('LimitTarget', 2).length).toBe(2);
+    expect(searchCacheFiltered({ query: 'LimitTarget', limit: 5 }).length).toBe(5);
+    expect(searchCacheFiltered({ query: 'LimitTarget', limit: 2 }).length).toBe(2);
   });
 
   it('returns matches in BM25 rank order', () => {
@@ -373,9 +372,9 @@ describe('searchCache (FTS5)', () => {
     );
 
     // Sanity: the implicit-AND form really does collapse to one hit here.
-    expect(searchCache('Quasar Nebula')).toHaveLength(1);
+    expect(searchCacheFiltered({ query: 'Quasar Nebula' })).toHaveLength(1);
 
-    const results = searchCache('Quasar OR Nebula');
+    const results = searchCacheFiltered({ query: 'Quasar OR Nebula' });
     expect(results).toHaveLength(2);
     // The rarer term (Quasar) should outrank the common one.
     expect(results[0].title).toBe('Quasar Nebula');

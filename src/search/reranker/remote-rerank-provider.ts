@@ -23,7 +23,8 @@ import { createLogger } from '../../logger.js';
 
 const log = createLogger('reranker');
 
-const RERANK_TIMEOUT_MS = 20_000;
+/** Read from WIGOLO_RERANKER_REQUEST_TIMEOUT_MS at call time, not hardcoded. */
+const rerankTimeoutMs = () => getConfig().rerankerRequestTimeoutMs;
 
 interface RerankResponse {
   response?: unknown;
@@ -69,7 +70,7 @@ export class RemoteRerankProvider implements RerankProvider {
         top_k: candidates.length,
       },
       apiKey: this.apiKey,
-      timeoutMs: RERANK_TIMEOUT_MS,
+      timeoutMs: rerankTimeoutMs(),
       label: 'rerank',
     });
 

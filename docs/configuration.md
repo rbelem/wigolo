@@ -88,7 +88,7 @@ For fetching pages behind a login with your own browser session: `WIGOLO_CDP_URL
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (Workers-AI-shaped hosted reranker), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), `none`, or `custom`. |
+| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (Workers-AI-shaped hosted reranker), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), or `none`. |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Which ranking model to load. |
 | `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the ranking model's ONNX session is released. The session parks ~500 MB of native memory that the JS heap does not own. `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_IDLE_TIMEOUT` | `600000` | Idle ms before the embedding model's ONNX session is released (~300 MB of native memory). `0` keeps it resident. |

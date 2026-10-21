@@ -6,11 +6,13 @@ import { postJsonCapped } from '../../../src/providers/hosted-http.js';
 let server: http.Server;
 let baseUrl: string;
 /** What the fake endpoint should do for the next request. */
-let mode: 'ok' | 'error' | 'huge-declared' | 'huge-streamed' | 'non-json' = 'ok';
+let mode: 'ok' | 'error' | 'busy' | 'bad' | 'huge-declared' | 'huge-streamed' | 'non-json' = 'ok';
 let lastAuth: string | undefined;
+let requests = 0;
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
+    requests++;
     lastAuth = req.headers.authorization;
     req.on('data', () => {});
     req.on('end', () => {
@@ -22,6 +24,16 @@ beforeAll(async () => {
       if (mode === 'non-json') {
         res.writeHead(200, { 'content-type': 'text/html' });
         res.end('<html>not json</html>');
+        return;
+      }
+      if (mode === 'busy') {
+        res.writeHead(503, { 'content-type': 'text/plain' });
+        res.end('unavailable');
+        return;
+      }
+      if (mode === 'bad') {
+        res.writeHead(400, { 'content-type': 'text/plain' });
+        res.end('bad request');
         return;
       }
       if (mode === 'error') {
@@ -69,6 +81,10 @@ const call = (over: Partial<Parameters<typeof postJsonCapped>[0]> = {}) =>
   });
 
 describe('postJsonCapped', () => {
+  beforeEach(() => {
+    requests = 0;
+  });
+
   it('returns parsed JSON and sends the bearer token', async () => {
     mode = 'ok';
     expect(await call()).toEqual({ hello: 'world' });
@@ -118,5 +134,25 @@ describe('postJsonCapped', () => {
   it('aborts a request that outlives its timeout', async () => {
     mode = 'huge-streamed';
     await expect(call({ timeoutMs: 50, maxResponseBytes: 10 * 1024 * 1024 })).rejects.toThrow();
+  });
+
+  it('retries a transient 503, then surfaces the failure', async () => {
+    mode = 'busy';
+    await expect(call()).rejects.toThrow(/HTTP 503/);
+    // Default is 2 attempts: the timeout/5xx path is retried once.
+    expect(requests).toBe(2);
+  });
+
+  it('does NOT retry a client error (400)', async () => {
+    mode = 'bad';
+    await expect(call()).rejects.toThrow(/HTTP 400/);
+    expect(requests).toBe(1);
+  });
+
+  it('does NOT retry a non-2xx 500', async () => {
+    // 500 is not in the transient set; retrying it just doubles the wait.
+    mode = 'error';
+    await expect(call()).rejects.toThrow(/HTTP 500/);
+    expect(requests).toBe(1);
   });
 });

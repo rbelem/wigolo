@@ -1,5 +1,7 @@
 import type { BackendStatus } from '../server/backend-status.js';
 import type { MultiBrowserPool } from '../fetch/browser-pool.js';
+import { getConfig } from '../config.js';
+import { isEmbedModelResident } from '../embedding/fastembed-provider.js';
 
 export interface HealthProbeInput {
   backendStatus: BackendStatus | null;
@@ -19,7 +21,37 @@ export interface HealthReport {
   searxng: 'active' | 'unavailable' | 'not_initialized' | 'not_configured';
   browsers: 'ready' | 'not_initialized';
   cache: 'active' | 'not_initialized';
+  /** Which inference backends are live, and whether a model is resident.
+   *
+   * The daemon can run two very different memory profiles (local ONNX vs
+   * hosted, ~880 MB vs ~280 MB). Without this an operator cannot tell which one
+   * is in force, or whether an idle eviction has actually happened. */
+  inference: {
+    embedding: 'local' | 'hosted';
+    reranker: 'onnx' | 'remote' | 'decision' | 'none';
+    /** True only when the local fastembed ONNX session is loaded. */
+    embed_model_resident: boolean;
+  };
   uptime_seconds: number;
+}
+
+/** Snapshot of the inference backends. Never throws. */
+function inferenceStatus(): HealthReport['inference'] {
+  try {
+    const cfg = getConfig();
+    const mode = cfg.reranker;
+    return {
+      embedding: cfg.embeddingProvider === 'openai-compatible' ? 'hosted' : 'local',
+      reranker: (mode === 'remote' || mode === 'decision' || mode === 'jev'
+        ? 'decision'
+        : mode === 'none'
+          ? 'none'
+          : 'onnx') as HealthReport['inference']['reranker'],
+      embed_model_resident: isEmbedModelResident(),
+    };
+  } catch {
+    return { embedding: 'local', reranker: 'onnx', embed_model_resident: false };
+  }
 }
 
 export function probeHealth(input: HealthProbeInput): HealthReport {
@@ -42,6 +74,7 @@ export function probeHealth(input: HealthProbeInput): HealthReport {
       searxng: 'not_configured',
       browsers,
       cache,
+      inference: inferenceStatus(),
       uptime_seconds: uptimeSeconds,
     };
   }
@@ -69,6 +102,7 @@ export function probeHealth(input: HealthProbeInput): HealthReport {
     searxng,
     browsers,
     cache,
+    inference: inferenceStatus(),
     uptime_seconds: uptimeSeconds,
   };
 }

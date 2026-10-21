@@ -137,7 +137,9 @@ export interface Config {
   githubToken: string | null;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   logFormat: 'json' | 'text';
-  reranker: 'onnx' | 'none' | 'custom' | 'remote' | 'decision' | 'jev';
+  /** 'custom' was advertised but never implemented — it fell through to
+   *  passthrough. Dropped so the type cannot promise a no-op. */
+  reranker: 'onnx' | 'none' | 'remote' | 'decision' | 'jev';
   rerankerModel: string;
   /**
    * Base URL for a hosted reranker (`reranker: 'remote'`). Workers AI shape:

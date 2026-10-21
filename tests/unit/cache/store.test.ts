@@ -359,7 +359,10 @@ describe('searchCache (FTS5)', () => {
   });
 
   it('returns matches in BM25 rank order', () => {
-    // The rarer term should rank first for a two-term query.
+    // FTS5 treats space-separated terms as implicit AND, so 'Quasar Nebula'
+    // matches only the row containing BOTH terms — a single-result set proves
+    // nothing about ordering. An explicit OR makes both rows match, so the
+    // assertion actually exercises bm25 and the ORDER BY qualification.
     cacheContent(
       makeRaw('https://example.com/both'),
       makeExtraction({ title: 'Quasar Nebula' }),
@@ -368,7 +371,13 @@ describe('searchCache (FTS5)', () => {
       makeRaw('https://example.com/one'),
       makeExtraction({ title: 'Nebula only' }),
     );
-    const results = searchCache('Quasar Nebula');
+
+    // Sanity: the implicit-AND form really does collapse to one hit here.
+    expect(searchCache('Quasar Nebula')).toHaveLength(1);
+
+    const results = searchCache('Quasar OR Nebula');
+    expect(results).toHaveLength(2);
+    // The rarer term (Quasar) should outrank the common one.
     expect(results[0].title).toBe('Quasar Nebula');
   });
 });

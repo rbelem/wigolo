@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import type { LLMCallOpts, LLMExtractResult } from './types.js';
 
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
@@ -7,6 +6,9 @@ export async function callGemini(
   opts: LLMCallOpts,
   apiKey: string,
 ): Promise<LLMExtractResult> {
+  // Dynamic import: the SDK is ~29 MB resident and only needed when the LLM
+  // extraction fallback actually runs.
+  const { GoogleGenAI } = await import('@google/genai');
   const client = new GoogleGenAI({ apiKey });
   const model = opts.modelOverride ?? DEFAULT_MODEL;
   const start = Date.now();

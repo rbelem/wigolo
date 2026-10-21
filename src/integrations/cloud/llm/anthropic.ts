@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import type { Tool } from '@anthropic-ai/sdk/resources/messages/messages.js';
 import type { LLMCallOpts, LLMExtractResult } from './types.js';
 
@@ -9,6 +8,10 @@ export async function callAnthropic(
   opts: LLMCallOpts,
   apiKey: string,
 ): Promise<LLMExtractResult> {
+  // Dynamic import: the SDK is ~15 MB resident and only needed when the LLM
+  // extraction fallback actually runs. A static import would map it into every
+  // process that touches the extract tool's module graph.
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey });
   const model = opts.modelOverride ?? DEFAULT_MODEL;
   const start = Date.now();

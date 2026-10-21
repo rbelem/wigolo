@@ -1,6 +1,7 @@
 import { closeDatabase } from '../cache/db.js';
 import { resetEmbeddingService } from '../embedding/embed.js';
 import { disposeRerankProvider } from '../providers/rerank-provider.js';
+import { disposeEmbedProvider } from '../providers/embed-provider.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('cli');
@@ -17,6 +18,11 @@ export async function shutdownCli(): Promise<void> {
     await disposeRerankProvider();
   } catch (err) {
     log.debug('rerank dispose failed', { error: err instanceof Error ? err.message : String(err) });
+  }
+  try {
+    await disposeEmbedProvider();
+  } catch (err) {
+    log.debug('embed dispose failed', { error: err instanceof Error ? err.message : String(err) });
   }
   try {
     resetEmbeddingService();

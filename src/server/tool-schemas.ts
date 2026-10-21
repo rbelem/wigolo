@@ -291,6 +291,19 @@ export const CACHE_TOOL_SCHEMA = {
       type: 'boolean',
       description: 'Return cache statistics (total URLs, size, date range)',
     },
+    compact: {
+      type: 'boolean',
+      description:
+        'Recompress legacy plain-text raw HTML into gzip storage and report the bytes reclaimed. ' +
+        'One-off maintenance that rewrites most of the database, and is idempotent. ' +
+        'Cached HTML is preserved, only its storage encoding changes. CLI equivalent: `wigolo cache compact`.',
+    },
+    vacuum: {
+      type: 'boolean',
+      description:
+        'With compact, rewrite the database file afterwards so freed pages return to the filesystem. ' +
+        'Needs about twice the database size in transient disk and takes a few seconds.',
+    },
     check_changes: {
       type: 'boolean',
       description:

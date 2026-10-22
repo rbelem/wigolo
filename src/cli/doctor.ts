@@ -96,7 +96,7 @@ function checkDocker(): { ok: boolean; version?: string; cli?: string } {
   return { ok: true, version: (r.stdout || '').trim(), cli };
 }
 
-async function checkPlaywright(): Promise<{ installed: boolean; version?: string; browsers: { chromium: boolean; chromiumHeadlessShell: boolean; firefox: boolean; webkit: boolean }; chromiumPath?: string; chromiumOnDisk: boolean; chromiumError?: string; probes: Record<BrowserName, BrowserProbeResult> }> {
+async function checkPlaywright(): Promise<{ installed: boolean; version?: string; browsers: { chromium: boolean; chromiumHeadlessShell: boolean; firefox: boolean; webkit: boolean }; chromiumPath?: string; chromiumOrigin: 'installed' | 'bundled'; chromiumOnDisk: boolean; chromiumError?: string; probes: Record<BrowserName, BrowserProbeResult> }> {
   let installed = false;
   let version: string | undefined;
   try {
@@ -113,7 +113,10 @@ async function checkPlaywright(): Promise<{ installed: boolean; version?: string
   // headless launch — not just existsSync, which on bare Linux passes while
   // launch() fails for missing OS libs.
   const [chromiumProbe, firefoxProbe, webkitProbe] = await Promise.all([
-    probeBrowser('chromium'),
+    // Ask what the tier would really launch: on a host whose Chromium comes from
+    // Flatpak, probing the bundled build alone reports a browser that is missing
+    // while fetches work.
+    probeBrowser('chromium', { preferInstalled: true }),
     probeBrowser('firefox'),
     probeBrowser('webkit'),
   ]);
@@ -131,6 +134,7 @@ async function checkPlaywright(): Promise<{ installed: boolean; version?: string
       webkit: webkitProbe.launchable,
     },
     chromiumPath: chromiumProbe.execPath || undefined,
+    chromiumOrigin: chromiumProbe.origin,
     chromiumOnDisk: chromiumProbe.onDisk,
     chromiumError: chromiumProbe.error,
     probes: { chromium: chromiumProbe, firefox: firefoxProbe, webkit: webkitProbe },
@@ -726,7 +730,8 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
       : pw.chromiumOnDisk
         ? ' (on disk but will not launch)'
         : ' (missing on disk)';
-    out(`  Chromium path: ${pw.chromiumPath}${onDiskNote}`);
+    const source = pw.chromiumOrigin === 'installed' ? ' (installed)' : ' (bundled)';
+    out(`  Chromium path: ${pw.chromiumPath}${source}${onDiskNote}`);
   }
   if (!pw.browsers.chromium) {
     if (pw.chromiumOnDisk) {

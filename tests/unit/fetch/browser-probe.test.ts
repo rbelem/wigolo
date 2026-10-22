@@ -10,6 +10,10 @@ vi.mock('node:fs', async () => {
 
 const chromiumLaunch = vi.fn();
 const chromiumExec = vi.fn(() => '/fake/playwright/chromium/chrome');
+const resolveAuthentic = vi.fn<() => string | null>(() => null);
+vi.mock('../../../src/fetch/browser-engine.js', () => ({
+  getBrowserEngine: () => ({ resolveAuthenticChromiumPath: () => resolveAuthentic() }),
+}));
 vi.mock('playwright', () => ({
   chromium: {
     executablePath: () => chromiumExec(),
@@ -103,5 +107,58 @@ describe('probeBrowser', () => {
 
     expect(r.launchable).toBe(true);
     expect(r.error).toBeUndefined();
+  });
+});
+
+describe('probeBrowser preferInstalled', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(existsSync).mockReturnValue(true);
+    chromiumExec.mockReturnValue('/fake/playwright/chromium/chrome');
+    chromiumLaunch.mockResolvedValue(fakeBrowser);
+    resolveAuthentic.mockReturnValue(null);
+  });
+
+  it('probes the installed build the tier would really launch', async () => {
+    resolveAuthentic.mockReturnValue('/flatpak/export/bin/com.google.Chrome');
+
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.origin).toBe('installed');
+    expect(r.execPath).toBe('/flatpak/export/bin/com.google.Chrome');
+    expect(r.launchable).toBe(true);
+    expect(chromiumLaunch).toHaveBeenCalledWith({
+      headless: true,
+      executablePath: '/flatpak/export/bin/com.google.Chrome',
+    });
+  });
+
+  it('falls back to the bundled build when no installed one is selected', async () => {
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.origin).toBe('bundled');
+    expect(r.execPath).toBe('/fake/playwright/chromium/chrome');
+    expect(chromiumLaunch.mock.calls[0][0]).toEqual({ headless: true });
+  });
+
+  it('never consults the engine for a non-chromium family', async () => {
+    resolveAuthentic.mockReturnValue('/flatpak/export/bin/com.google.Chrome');
+
+    const r = await probeBrowser('firefox', { preferInstalled: true });
+
+    expect(r.origin).toBe('bundled');
+    expect(resolveAuthentic).not.toHaveBeenCalled();
+  });
+
+  it('reports a missing selected build as not on disk, without launching', async () => {
+    resolveAuthentic.mockReturnValue('/gone/chrome');
+    vi.mocked(existsSync).mockReturnValue(false);
+
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.onDisk).toBe(false);
+    expect(r.launchable).toBe(false);
+    expect(r.error).toContain('/gone/chrome');
+    expect(chromiumLaunch).not.toHaveBeenCalled();
   });
 });

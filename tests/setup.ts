@@ -21,6 +21,21 @@ function ensureTestDataDir(): void {
 }
 ensureTestDataDir();
 
+// The data dir alone does not protect the persisted settings: code that saves
+// them resolves WIGOLO_CONFIG_PATH, then falls back to <home>/.wigolo/config.json.
+// A test that persists settings therefore rewrote the developer's real config
+// and dropped every key the test did not know about. Same guard shape as above:
+// set it only when unset, and re-assert in beforeEach so a test that deletes it
+// in cleanup cannot leak the next one onto the real file.
+const TEST_CONFIG_PATH = join(TEST_DATA_DIR, 'config.json');
+function ensureTestConfigPath(): void {
+  if (!process.env.WIGOLO_CONFIG_PATH) {
+    mkdirSync(TEST_DATA_DIR, { recursive: true });
+    process.env.WIGOLO_CONFIG_PATH = TEST_CONFIG_PATH;
+  }
+}
+ensureTestConfigPath();
+
 // Default reranker to 'none' in tests so the cross-encoder model isn't lazily
 // downloaded. Tests that exercise the reranker explicitly set
 // WIGOLO_RERANKER='onnx' and mock the rerank provider in their own scope.
@@ -74,6 +89,7 @@ const savedCIEnv: Partial<Record<(typeof CI_ENV_KEYS)[number], string | undefine
 
 beforeEach(() => {
   ensureTestDataDir();
+  ensureTestConfigPath();
   for (const key of CI_ENV_KEYS) {
     savedCIEnv[key] = process.env[key];
     delete process.env[key];

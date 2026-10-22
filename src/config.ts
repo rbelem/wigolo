@@ -254,15 +254,14 @@ export interface Config {
    */
   stealth: 'off' | 'auto' | 'on';
   /**
-   * Which browser build the DEDICATED stealth path launches:
+   * Which browser build the browser tier launches:
    *   - 'chromium' : always use the bundled browser engine, never probe for an
    *                  installed one (DEFAULT).
-   *   - 'auto'     : prefer an authentic installed browser (real TLS + version),
-   *                  falling back to the bundled engine when none is installed.
-   *   - 'chrome'   : force the authentic installed browser; still falls back to
-   *                  bundled if the launch fails.
-   * Any other value normalizes to 'chromium'. Applies to the stealth path only —
-   * the pooled fast path is unaffected.
+   *   - 'auto'     : prefer an installed browser (real TLS + version), falling
+   *                  back to the bundled engine when none is installed.
+   *   - 'chrome'   : force the installed browser; still falls back to bundled if
+   *                  the launch fails.
+   * Any other value normalizes to 'chromium'.
    *
    * Defaults to the BUNDLED engine so every install renders through the same
    * pinned browser. Launching whatever build happens to be on the host makes

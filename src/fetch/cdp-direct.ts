@@ -1,11 +1,11 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdtemp as fsMkdtemp, rm as fsRm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLogger } from '../logger.js';
 import { getConfig } from '../config.js';
 import { sanitizedChildEnv } from '../util/child-env.js';
+import { getBrowserEngine } from './browser-engine.js';
 import { stealthLaunchArgs } from './stealth.js';
 import { discoverSessions, isCDPReachable } from './cdp-client.js';
 import { classifyChallenge } from './challenge-classify.js';
@@ -610,52 +610,6 @@ function hasDisplaySession(): boolean {
 // Grace after SIGTERM before escalating to SIGKILL on teardown.
 const KILL_GRACE_MS = 2_000;
 
-/**
- * Real Chrome executable resolver. Prefers an explicit env override, else probes
- * the well-known per-platform install locations for an AUTHENTIC Chrome (never
- * the bundled "Chrome for Testing", whose fingerprint is exactly what this rung
- * exists to avoid). Returns `null` when no installed Chrome is found OR when the
- * user pinned `browserChannel: 'chromium'` (an explicit opt-out of authentic
- * Chrome) — either way the caller degrades to the normal browser tier.
- */
-function defaultResolveChrome(): string | null {
-  const cfg = getConfig();
-  // Respect an explicit chromium pin: the whole rung is about real Chrome.
-  if (cfg.browserChannel === 'chromium') return null;
-
-  const override = process.env.WIGOLO_CHROME_PATH || process.env.CHROME_PATH;
-  if (override && existsSync(override)) return override;
-
-  const candidates: string[] =
-    process.platform === 'darwin'
-      ? [
-          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-          '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta',
-          '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        ]
-      : process.platform === 'win32'
-        ? [
-            join(process.env.PROGRAMFILES ?? 'C:\\Program Files', 'Google\\Chrome\\Application\\chrome.exe'),
-            join(process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)', 'Google\\Chrome\\Application\\chrome.exe'),
-            join(process.env.LOCALAPPDATA ?? '', 'Google\\Chrome\\Application\\chrome.exe'),
-          ]
-        : [
-            '/usr/bin/google-chrome',
-            '/usr/bin/google-chrome-stable',
-            '/opt/google/chrome/chrome',
-            '/usr/bin/chromium',
-            '/usr/bin/chromium-browser',
-            '/snap/bin/chromium',
-          ];
-
-  for (const path of candidates) {
-    try {
-      if (path && existsSync(path)) return path;
-    } catch { /* keep probing */ }
-  }
-  return null;
-}
-
 /** Reserve a free localhost TCP port, then release it. Best-effort: a returned
  *  port could in theory be reclaimed before Chrome binds it, but for a throwaway
  *  child this is acceptable and far simpler than DevToolsActivePort parsing. */
@@ -709,7 +663,7 @@ async function defaultConnectTransport(
 
 function realFetchDeps(): CdpDirectFetchDeps {
   return {
-    resolveChrome: defaultResolveChrome,
+    resolveChrome: () => getBrowserEngine().resolveAuthenticChromiumPath(),
     spawn: (command, args, options) => nodeSpawn(command, args, options),
     // detached: true so killChild can signal the whole process group (-pid),
     // reaping reparented renderer/GPU children Chrome forks.

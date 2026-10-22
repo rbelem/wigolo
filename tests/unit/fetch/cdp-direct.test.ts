@@ -1,11 +1,46 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { resetConfig } from '../../../src/config.js';
 import {
   cdpDirectConnect,
+  cdpDirectFetch,
   loadCRI,
   _setCriForTests,
+  _setCdpDirectFetchDepsForTests,
+  _setProcessKillForTests,
+  type CdpDirectFetchDeps,
   type CdpSend,
   type CdpTransport,
 } from '../../../src/fetch/cdp-direct.js';
+
+/**
+ * The engine's host is a FAKE: the rung resolves its binary through the engine,
+ * so the fake host decides which "installed" build exists.
+ */
+const engineState = vi.hoisted(() => ({
+  existing: [] as string[],
+  engine: null as unknown,
+}));
+
+vi.mock('../../../src/fetch/browser-engine.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/fetch/browser-engine.js')>();
+  return {
+    ...actual,
+    getBrowserEngine: () => {
+      if (!engineState.engine) {
+        engineState.engine = actual.createBrowserEngine({
+          platform: 'linux',
+          env: process.env,
+          home: '/home/tester',
+          exists: (path) => engineState.existing.includes(path),
+        });
+      }
+      return engineState.engine;
+    },
+  };
+});
+
+import { getBrowserEngine } from '../../../src/fetch/browser-engine.js';
 
 // A recording CDP transport: captures every send(method, params) so a test can
 // assert the leak-free invariant — that the connect/eval sequence issues ZERO
@@ -179,5 +214,76 @@ describe('cdp-direct — graceful optional-dependency fallback', () => {
     expect(calls).not.toContain('Runtime.enable');
     expect(calls).not.toContain('Target.setAutoAttach');
     await handle!.close();
+  });
+});
+
+// A flatpak-installed Chrome, as the engine resolves it.
+const INSTALLED_CHROME =
+  '/home/tester/.local/share/flatpak/app/com.google.Chrome/current/active/export/bin/com.google.Chrome';
+
+/** A fake spawned child: the rung only needs the EventEmitter surface. */
+class FakeChild extends EventEmitter {
+  pid = 4242;
+  kill(): boolean {
+    setImmediate(() => this.emit('exit', 0, null));
+    return true;
+  }
+}
+
+function makeRungDeps(spawn: ReturnType<typeof vi.fn>): CdpDirectFetchDeps {
+  return {
+    resolveChrome: () => getBrowserEngine().resolveAuthenticChromiumPath(),
+    spawn: spawn as unknown as CdpDirectFetchDeps['spawn'],
+    isReachable: async () => true,
+    mkdtemp: async (prefix: string) => `${prefix}fake`,
+    rm: async () => {},
+    // No transport: the rung yields nothing and the caller falls back.
+    connectTransport: async () => null,
+  };
+}
+
+describe('cdp-direct — the rung only ever drives an AUTHENTIC installed build', () => {
+  beforeEach(() => {
+    resetConfig();
+    engineState.existing = [];
+    engineState.engine = null;
+    _setCdpDirectFetchDepsForTests(undefined);
+    // Never signal a real process group: the fake child's pid is not real.
+    _setProcessKillForTests(() => {});
+  });
+  afterEach(() => {
+    delete process.env.WIGOLO_BROWSER_CHANNEL;
+    resetConfig();
+    _setCdpDirectFetchDepsForTests(undefined);
+    _setProcessKillForTests(undefined);
+  });
+
+  it('under the chromium pin the rung yields nothing and never spawns', async () => {
+    process.env.WIGOLO_BROWSER_CHANNEL = 'chromium';
+    resetConfig();
+    engineState.existing = [INSTALLED_CHROME];
+    const spawn = vi.fn(() => new FakeChild());
+    _setCdpDirectFetchDepsForTests(makeRungDeps(spawn));
+
+    const result = await cdpDirectFetch('https://example.com', {});
+
+    expect(result).toBeNull();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('under the auto channel the rung spawns the installed build', async () => {
+    process.env.WIGOLO_BROWSER_CHANNEL = 'auto';
+    resetConfig();
+    engineState.existing = [INSTALLED_CHROME];
+    const spawn = vi.fn(() => new FakeChild());
+    _setCdpDirectFetchDepsForTests(makeRungDeps(spawn));
+
+    const result = await cdpDirectFetch('https://example.com', {});
+
+    // The spawned binary IS the resolved installed build.
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(spawn.mock.calls[0][0]).toBe(INSTALLED_CHROME);
+    // No transport → the rung yields nothing and the caller falls back.
+    expect(result).toBeNull();
   });
 });

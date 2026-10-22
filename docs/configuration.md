@@ -65,6 +65,9 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 | `MAX_REDIRECTS` | `5` | Redirect ceiling. |
 | `MAX_BROWSERS` | `3` | Browser-engine pool size for JS-rendered pages. |
 | `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list of browser families to pool. |
+| `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build the browser tier launches. `chromium` uses the bundled engine only, so every host behaves identically. `auto` and `chrome` prefer an installed build and fall back to the bundled engine when it cannot start. |
+| `WIGOLO_BROWSER_HEADFUL` | `false` | Launch the browser with a visible window. Off by default so a background server never pops a window. |
+| `WIGOLO_CHROME_PATH` | unset | Absolute path to a Chromium binary to use instead of the bundled engine. Honoured only when the file exists. |
 | `BROWSER_IDLE_TIMEOUT` | `60000` | Idle ms before a pooled browser CONTEXT is released. |
 | `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT` | `300000` | Idle ms before the pooled browser PROCESS is closed. The Chromium process tree is ~1.2 GB resident, so closing it when the pool goes quiet is the single largest memory reclaim. `0` keeps it resident forever. |
 | `USER_AGENT` | unset | Override the outgoing user agent. |
@@ -83,6 +86,8 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 Reliability framing matters here: these tiers make wigolo read pages the way a real browser does, and it learns per-domain which tier works (inspect with [`wigolo tune`](./cli.md#tune)). When a challenge doesn't clear, the failure is labeled honestly instead of returning junk. Crawling stays polite throughout — robots.txt respected by default, per-domain rate limits, and page budgets sized for research, not bulk harvesting.
 
 For fetching pages behind a login with your own browser session: `WIGOLO_CDP_URL` (attach to a running browser's debug port), `WIGOLO_CHROME_PROFILE_PATH` (use a profile), `WIGOLO_AUTH_STATE_PATH` (a saved storage-state file). Then pass `use_auth: true` on `fetch`/`crawl`. `wigolo auth discover` lists attachable sessions.
+
+A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto` picks it up with no extra configuration. The engine launches Flatpak through flatpak's own launcher at `~/.local/share/flatpak/app/<app-id>/current/active/export/bin/<app-id>`, so the browser runs inside its sandbox and needs no extra host libraries. One caveat. A branded Chrome installed somewhere the native table misses can still be pointed at explicitly with `WIGOLO_CHROME_PATH=/path/to/chrome`.
 
 ## On-device models
 
@@ -112,7 +117,7 @@ is self-explanatory:
 |---|---|
 | Embeddings | `WIGOLO_EMBEDDING_PROVIDER`, `_BASE_URL`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT` |
 | Reranker | `WIGOLO_RERANKER` (mode), `_BASE_URL`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT_MS` |
-| Browser | `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT`, plus the pre-existing `WIGOLO_BROWSER_TYPES` / `_CHANNEL` / `_HEADFUL` / `_WINDOWLESS` |
+| Browser | `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT`, plus the pre-existing `WIGOLO_BROWSER_TYPES` / `_CHANNEL` / `_HEADFUL` / `_WINDOWLESS`, and `WIGOLO_CHROME_PATH` |
 
 The bare `BROWSER_PROCESS_IDLE_TIMEOUT` was normalized to
 `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT` and the old spelling still works.

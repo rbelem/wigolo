@@ -1,22 +1,58 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { resetConfig } from '../../../src/config.js';
+import { sanitizedChildEnv } from '../../../src/util/child-env.js';
+
+/**
+ * The engine's host is a FAKE: no filesystem is touched, so the installed
+ * builds are exactly the paths each test lists. `engineState.engine` is reset
+ * between tests so the engine's failure memo never leaks across them.
+ */
+const engineState = vi.hoisted(() => ({
+  existing: [] as string[],
+  existsCalls: [] as string[],
+  engine: null as unknown,
+}));
+
+vi.mock('../../../src/fetch/browser-engine.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/fetch/browser-engine.js')>();
+  return {
+    ...actual,
+    getBrowserEngine: () => {
+      if (!engineState.engine) {
+        engineState.engine = actual.createBrowserEngine({
+          platform: 'linux',
+          env: process.env,
+          home: '/home/tester',
+          exists: (path) => {
+            engineState.existsCalls.push(path);
+            return engineState.existing.includes(path);
+          },
+        });
+      }
+      return engineState.engine;
+    },
+  };
+});
+
+// A flatpak-installed Chrome, as the engine resolves it.
+const INSTALLED_CHROME =
+  '/home/tester/.local/share/flatpak/app/com.google.Chrome/current/active/export/bin/com.google.Chrome';
 
 // Shared mock state. Captures EVERY launch option object so the tests can
-// assert the exact channel + headless flags the dedicated stealth path passes,
-// and can simulate a machine with no installed authentic browser (the
-// channel:'chrome' launch throws, the bundled launch succeeds).
-interface ChannelState {
+// assert the exact executablePath + headless flags the launch paths pass, and
+// can simulate a machine whose installed build cannot start.
+interface LaunchState {
   launchCalls: Array<Record<string, unknown>>;
-  // When true, a launch whose options carry `channel:'chrome'` rejects
-  // (simulates no installed Chrome); a launch WITHOUT channel succeeds.
-  chromeChannelUnavailable: boolean;
+  // When true, a launch that names an executablePath rejects (the installed
+  // build is broken); a launch WITHOUT one succeeds.
+  installedUnavailable: boolean;
   // Version string the launched browser reports (drives the coherence contract).
   browserVersion: string;
 }
 
-const state: ChannelState = {
+const state: LaunchState = {
   launchCalls: [],
-  chromeChannelUnavailable: false,
+  installedUnavailable: false,
   browserVersion: '142.0.7444.0',
 };
 
@@ -66,8 +102,8 @@ function makeBrowser() {
 vi.mock('playwright', () => {
   const launch = vi.fn().mockImplementation((opts: Record<string, unknown>) => {
     state.launchCalls.push(opts);
-    if (state.chromeChannelUnavailable && opts.channel === 'chrome') {
-      return Promise.reject(new Error('Chromium distribution "chrome" is not found'));
+    if (state.installedUnavailable && opts.executablePath !== undefined) {
+      return Promise.reject(new Error('executable does not exist'));
     }
     return Promise.resolve(makeBrowser());
   });
@@ -77,18 +113,21 @@ vi.mock('playwright', () => {
 
 import { MultiBrowserPool } from '../../../src/fetch/browser-pool.js';
 
-function channelLaunches(): Array<Record<string, unknown>> {
-  return state.launchCalls.filter((o) => o.channel === 'chrome');
+function installedLaunches(): Array<Record<string, unknown>> {
+  return state.launchCalls.filter((o) => o.executablePath !== undefined);
 }
 
 function resetState() {
   state.launchCalls = [];
-  state.chromeChannelUnavailable = false;
+  state.installedUnavailable = false;
   state.browserVersion = '142.0.7444.0';
   lastContextOptions = undefined;
+  engineState.existing = [];
+  engineState.existsCalls = [];
+  engineState.engine = null;
 }
 
-describe('dedicated stealth launch: authentic-browser channel (T1-A)', () => {
+describe('dedicated stealth launch: installed browser build (T1-A)', () => {
   beforeEach(() => {
     resetState();
     // Probing for an installed browser is OPT-IN — the default is the pinned
@@ -103,61 +142,68 @@ describe('dedicated stealth launch: authentic-browser channel (T1-A)', () => {
     resetConfig();
   });
 
-  it('prefers channel:chrome, then falls back to bundled when Chrome is not installed', async () => {
-    state.chromeChannelUnavailable = true;
+  it('prefers the installed build, then falls back to bundled when it cannot start', async () => {
+    engineState.existing = [INSTALLED_CHROME];
+    state.installedUnavailable = true;
     const pool = new MultiBrowserPool();
 
     const result = await pool.fetchWithBrowser('https://blocked.example', { stealth: true });
     expect(result.method).toBe('browser');
 
-    // It attempted the authentic browser first...
-    expect(channelLaunches().length).toBe(1);
-    // ...then relaunched WITHOUT a channel (bundled engine) after the failure.
-    const bundled = state.launchCalls.filter((o) => o.channel === undefined);
+    // It attempted the installed build first...
+    expect(installedLaunches().length).toBe(1);
+    expect(installedLaunches()[0].executablePath).toBe(INSTALLED_CHROME);
+    // ...then relaunched WITHOUT an executablePath (bundled engine) after the failure.
+    const bundled = state.launchCalls.filter((o) => o.executablePath === undefined);
     expect(bundled.length).toBe(1);
 
     await pool.shutdown();
   });
 
-  it('caches the failed probe: channel:chrome is attempted ONCE across two fetches', async () => {
-    state.chromeChannelUnavailable = true;
+  it('attempts the failed installed build ONCE across two fetches', async () => {
+    engineState.existing = [INSTALLED_CHROME];
+    state.installedUnavailable = true;
     const pool = new MultiBrowserPool();
 
     await pool.fetchWithBrowser('https://a.example', { stealth: true });
     await pool.fetchWithBrowser('https://b.example', { stealth: true });
 
-    // The failed channel:'chrome' attempt is not repaid on the second fetch.
-    expect(channelLaunches().length).toBe(1);
+    // The failed installed build is not repaid on the second fetch.
+    expect(installedLaunches().length).toBe(1);
     // Both fetches still launched (each via the cached bundled decision).
-    expect(state.launchCalls.length).toBe(3); // 1 chrome-attempt + 2 bundled
+    expect(state.launchCalls.length).toBe(3); // 1 installed-attempt + 2 bundled
 
     await pool.shutdown();
   });
 
-  it('caches the successful probe: still uses channel:chrome on the second fetch (no bundled relaunch)', async () => {
-    state.chromeChannelUnavailable = false; // Chrome IS installed
+  it('keeps using the installed build on the second fetch (no bundled relaunch)', async () => {
+    engineState.existing = [INSTALLED_CHROME];
+    state.installedUnavailable = false; // the installed build launches
     const pool = new MultiBrowserPool();
 
     await pool.fetchWithBrowser('https://a.example', { stealth: true });
     await pool.fetchWithBrowser('https://b.example', { stealth: true });
 
-    // Both fetches used the authentic channel; no bundled launch ever happened.
-    expect(channelLaunches().length).toBe(2);
-    expect(state.launchCalls.every((o) => o.channel === 'chrome')).toBe(true);
+    // Both fetches used the installed build; no bundled launch ever happened.
+    expect(installedLaunches().length).toBe(2);
+    expect(state.launchCalls.every((o) => o.executablePath === INSTALLED_CHROME)).toBe(true);
 
     await pool.shutdown();
   });
 
-  it('WIGOLO_BROWSER_CHANNEL=chromium NEVER attempts channel:chrome', async () => {
+  it('WIGOLO_BROWSER_CHANNEL=chromium NEVER probes the host', async () => {
     process.env.WIGOLO_BROWSER_CHANNEL = 'chromium';
     resetConfig();
+    engineState.existing = [INSTALLED_CHROME];
     const pool = new MultiBrowserPool();
 
     await pool.fetchWithBrowser('https://a.example', { stealth: true });
 
-    expect(channelLaunches().length).toBe(0);
+    expect(installedLaunches().length).toBe(0);
     expect(state.launchCalls.length).toBe(1);
-    expect(state.launchCalls[0].channel).toBeUndefined();
+    expect(state.launchCalls[0].executablePath).toBeUndefined();
+    // The host was never probed for a candidate binary.
+    expect(engineState.existsCalls).toEqual([]);
 
     await pool.shutdown();
   });
@@ -217,10 +263,10 @@ describe('pooled (non-stealth) path is byte-unchanged (MUST-NOT-REGRESS)', () =>
     resetConfig();
   });
 
-  it('the pooled launch still passes headless:true and NEVER a channel', async () => {
+  it('under the pin the pooled launch receives exactly today\'s options object', async () => {
     // Even with knobs that would change the stealth path, the pooled fast path
-    // must be unaffected: it launches headless, bundled, no channel.
-    process.env.WIGOLO_BROWSER_CHANNEL = 'chrome';
+    // must be unaffected: it launches headless, bundled, no executablePath.
+    process.env.WIGOLO_BROWSER_CHANNEL = 'chromium';
     process.env.WIGOLO_BROWSER_HEADFUL = '1';
     resetConfig();
     const pool = new MultiBrowserPool();
@@ -229,11 +275,30 @@ describe('pooled (non-stealth) path is byte-unchanged (MUST-NOT-REGRESS)', () =>
     expect(result.method).toBe('browser');
 
     expect(state.launchCalls.length).toBe(1);
-    const opts = state.launchCalls[0];
-    expect(opts.headless).toBe(true);
-    expect(opts.channel).toBeUndefined();
-    // The pooled launch does not carry the stealth hardening args either.
-    expect(opts.args).toBeUndefined();
+    expect(state.launchCalls[0]).toEqual({
+      headless: true,
+      env: sanitizedChildEnv({ stripProxy: true }),
+    });
+    // No executablePath key at all, and no stealth hardening args.
+    expect(Object.keys(state.launchCalls[0])).toEqual(['headless', 'env']);
+    // The host was never probed for a candidate binary.
+    expect(engineState.existsCalls).toEqual([]);
+
+    await pool.shutdown();
+  });
+
+  it('the pooled launch receives the installed build\'s executablePath when opted in', async () => {
+    process.env.WIGOLO_BROWSER_CHANNEL = 'auto';
+    resetConfig();
+    engineState.existing = [INSTALLED_CHROME];
+    const pool = new MultiBrowserPool();
+
+    const result = await pool.fetchWithBrowser('https://plain.example', {}); // no stealth
+    expect(result.method).toBe('browser');
+
+    expect(state.launchCalls.length).toBe(1);
+    expect(state.launchCalls[0].executablePath).toBe(INSTALLED_CHROME);
+    expect(state.launchCalls[0].headless).toBe(true);
 
     await pool.shutdown();
   });

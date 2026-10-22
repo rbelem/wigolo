@@ -21,6 +21,7 @@ import { aiSolveChallenge, type ImageSolveSubType, type WidgetImage } from './ai
 import { humanSolveChallenge } from './human-solve.js';
 import { connectScrapingBrowser } from './scraping-browser.js';
 import { cdpDirectFetch } from './cdp-direct.js';
+import { getBrowserEngine } from './browser-engine.js';
 import { resolveStealthUA, stealthLaunchArgs, stealthContextOptions, parseChromeMajor, resolveStealthLauncher, recordLaunchedChromeMajor, STEALTH_INIT_SCRIPT } from './stealth.js';
 import { humanizePage } from './behavior.js';
 import { recordDomainClearance, clearDomainClearance } from '../cache/store.js';
@@ -298,13 +299,6 @@ export class MultiBrowserPool {
   // launching and releases it after close.
   private stealthActive = 0;
   private readonly stealthWaitQueue: Array<() => void> = [];
-  // Cached outcome of the ONE-per-process authentic-browser probe on the
-  // dedicated stealth path (T1-A). 'chrome' means an installed browser launched
-  // successfully; 'bundled' means we fell back (or were forced) to the bundled
-  // browser engine. null = not probed yet. Caching avoids paying the failed
-  // channel:'chrome' launch cost on every stealth fetch. Chromium-only — the
-  // authentic-channel concept does not apply to firefox/webkit.
-  private resolvedStealthChannel: 'chrome' | 'bundled' | null = null;
   // Cached outcome of the hardened-driver LAUNCH probe. 'standard' means the
   // optional hardened driver imported but could not launch on this machine, so
   // we stop reaching for it. null = not yet demoted.
@@ -401,11 +395,17 @@ export class MultiBrowserPool {
       const cfg = getConfig();
       const proxy = playwrightProxyOption(cfg.proxyUrl, cfg.useProxy);
       log.debug('launching browser', { type, proxied: proxy !== undefined });
-      typePool.browser = await launcher.launch({
-        headless: true,
-        env: sanitizedChildEnv({ stripProxy: true }),
-        ...(proxy ? { proxy } : {}),
-      });
+      const attempt = (engineOpts: { executablePath?: string }): Promise<Browser> =>
+        launcher.launch({
+          headless: true,
+          env: sanitizedChildEnv({ stripProxy: true }),
+          ...(proxy ? { proxy } : {}),
+          ...engineOpts,
+        });
+      typePool.browser =
+        type === 'chromium'
+          ? await getBrowserEngine().launchBestChromium(attempt)
+          : await attempt({});
       // A browser launched with no context (the prewarm path) would otherwise
       // never be reclaimed: there is no context idle timer to piggyback on.
       // Start the idle clock here so the browser is closed once the type has
@@ -575,24 +575,23 @@ export class MultiBrowserPool {
   }
 
   /**
-   * Launch the DEDICATED stealth browser (T1-A + T1-B). Prefers an authentic
-   * installed browser (real TLS + version) via the browser engine's `chrome`
-   * channel and falls back to the bundled engine when none is installed
-   * (channel launch throws → relaunch without it). The probe outcome is cached
-   * for the process so a machine without an installed browser does not repay
-   * the failed-launch cost on every stealth fetch. Headless-by-default uses the
-   * engine's windowless headless mode (headful-grade fingerprint, no visible
-   * window); `browserHeadful` opts into a true visible window.
+   * Launch the DEDICATED stealth browser (T1-A + T1-B). The browser engine
+   * owns WHICH Chromium binary runs: under the pinned channel the plan is the
+   * bundled engine alone, and under an opted-in channel it is an installed
+   * build (override > native > flatpak) that degrades to the bundled engine
+   * when that build cannot start. Headless-by-default uses the engine's
+   * windowless headless mode (headful-grade fingerprint, no visible window);
+   * `browserHeadful` opts into a true visible window.
    *
-   * Chromium-only for the authentic-channel path — the concept does not apply
+   * Chromium-only for the installed-build path — the concept does not apply
    * to firefox/webkit, which always launch bundled. Returns the launched
    * browser; the caller owns closing it.
    *
    * Driver selection (T2-E): on chromium, when `stealthDriver` is auto/patchright
    * and the optional driver-hardened launcher is present, that launcher replaces
    * the standard one — it patches the CDP `Runtime.enable`-class automation leak
-   * at the driver level. It accepts the SAME launch options (incl. channel:
-   * 'chrome'), so the authentic-channel probe + headful + graceful fallback below
+   * at the driver level. It accepts the SAME launch options (incl. the engine's
+   * executablePath), so the engine chain + headful + graceful fallback below
    * apply on top unchanged — patched driver + real installed Chrome combine. The
    * optional dep absent (or `stealthDriver: 'playwright'`, or firefox/webkit)
    * falls back to the standard launcher silently.
@@ -627,11 +626,11 @@ export class MultiBrowserPool {
 
     /**
      * Launch through the hardened driver, degrading to the standard one when
-     * the hardened driver itself cannot launch (as opposed to the CHANNEL being
-     * unavailable, which the caller handles separately). The downgrade is
-     * cached for the process so a broken optional driver is probed once, not
-     * once per fetch. Errors from the STANDARD launcher propagate — at that
-     * point there is nothing left to fall back to.
+     * the hardened driver itself cannot launch (as opposed to the chosen
+     * browser candidate being unavailable, which the engine handles
+     * separately). The downgrade is cached for the process so a broken optional
+     * driver is probed once, not once per fetch. Errors from the STANDARD
+     * launcher propagate — at that point there is nothing left to fall back to.
      */
     const launchWithFallback = async (opts: Record<string, unknown>): Promise<Browser> => {
       if (!usingHardened) return standard.launch(opts);
@@ -647,41 +646,12 @@ export class MultiBrowserPool {
       }
     };
 
-    // Only chromium supports the authentic installed-browser channel. For
-    // firefox/webkit (or a 'chromium'-forced config) launch bundled directly.
-    const wantChannel = type === 'chromium' && cfg.browserChannel !== 'chromium';
-    if (!wantChannel) {
-      this.resolvedStealthChannel = 'bundled';
-      return launchWithFallback(baseOpts);
-    }
-
-    // Cached probe: never re-attempt channel:'chrome' once we know it fails on
-    // this machine, and never drop back to bundled once we know chrome works.
-    if (this.resolvedStealthChannel === 'bundled') {
-      return launchWithFallback(baseOpts);
-    }
-    if (this.resolvedStealthChannel === 'chrome') {
-      return launchWithFallback({ ...baseOpts, channel: 'chrome' });
-    }
-
-    // First probe this process. Try the authentic browser; on ANY launch
-    // failure (not installed / spawn error) fall back to the bundled engine and
-    // cache the outcome so later fetches skip the failed attempt. A hardened
-    // driver that cannot launch AT ALL is caught one level down, so a channel
-    // failure and a driver failure cannot be confused for one another.
-    try {
-      const browser = await launchWithFallback({ ...baseOpts, channel: 'chrome' });
-      this.resolvedStealthChannel = 'chrome';
-      log.info('anti-bot stealth launch using authentic installed browser', { type });
-      return browser;
-    } catch (err) {
-      this.resolvedStealthChannel = 'bundled';
-      log.info('authentic browser unavailable, using bundled browser engine for stealth', {
-        type,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return launchWithFallback(baseOpts);
-    }
+    // Only chromium has installed builds to choose from. For firefox/webkit
+    // (or a 'chromium'-forced config) launch bundled directly.
+    const attempt = (engineOpts: { executablePath?: string }): Promise<Browser> =>
+      launchWithFallback({ ...baseOpts, ...engineOpts });
+    if (type !== 'chromium') return attempt({});
+    return getBrowserEngine().launchBestChromium(attempt);
   }
 
   async fetchWithBrowser(url: string, options: BrowserFetchOptions = {}): Promise<RawFetchResult> {

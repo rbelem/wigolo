@@ -410,6 +410,8 @@ Top environment variables. All optional — defaults are safe.
 | `WIGOLO_CDP_URL` | unset | Chrome DevTools endpoint (e.g. `http://localhost:9222`) |
 | `MAX_BROWSERS` | `3` | Browser pool size |
 | `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list: `chromium,firefox,webkit` |
+| `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build to launch: `chromium` (bundled) \| `auto`/`chrome` (an installed build, Flatpak included, bundled as fallback) |
+| `WIGOLO_CHROME_PATH` | unset | Absolute path to a Chromium binary to use instead of the bundled engine |
 | `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` \| `remote` \| `decision` (`jev` alias) \| `none` |
 | `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker endpoint (Workers AI, or any Jev-API-compatible decision model) |
 | `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker (optional for self-hosts) |

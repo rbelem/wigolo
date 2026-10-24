@@ -150,6 +150,62 @@ describe('DecisionRerankProvider', () => {
     expect(out.map((r) => r.id)).toEqual(['a', 'b']);
   });
 
+  it('reads a whole-number score as a bucket INDEX, not a probability', async () => {
+    // A `score` question is answered with the index of the criterion, so 0 is
+    // Irrelevant, 1 is Marginal (1/3) and 3 is Highly relevant (1.0). Reading
+    // 1 as probability 1 is the bug this pins: "Marginal" would outrank a
+    // certain "Highly relevant".
+    reply = { answers: { r0: { score: 0 }, r1: { score: 1 }, r2: { score: 3 } } };
+    const out = await new DecisionRerankProvider().rerank('q', candidates);
+    const byId = Object.fromEntries(out.map((r) => [r.id, r.score]));
+
+    expect(out.map((r) => r.id)).toEqual(['gamma', 'beta', 'alpha']);
+    expect(byId.alpha).toBe(0);
+    expect(byId.beta).toBeCloseTo(1 / 3, 10);
+    expect(byId.gamma).toBe(1);
+  });
+
+  it('reads a non-integral score in [0,1] as a probability', async () => {
+    reply = { answers: { r0: { score: 0.85 }, r1: { score: 0.2 } } };
+    const out = await new DecisionRerankProvider().rerank('q', [
+      { id: 'a', text: 'x' },
+      { id: 'b', text: 'y' },
+    ]);
+    const byId = Object.fromEntries(out.map((r) => [r.id, r.score]));
+
+    expect(byId.a).toBeCloseTo(0.85, 10);
+    expect(byId.b).toBeCloseTo(0.2, 10);
+  });
+
+  it('pins the `1.0` ambiguity to the bucket-index reading', async () => {
+    // JSON has no separate `1.0`: it parses to the same number as `1`, so a
+    // payload cannot say which reading it meant. The bucket-index contract
+    // wins (index 1 = Marginal), and a vendor that means certainty has to say
+    // so with an explicit `probability` field (next test). If this flips, a
+    // bare integer would silently become a certainty score again.
+    reply = { answers: { r0: { score: 1.0 }, r1: { score: 1 } } };
+    const out = await new DecisionRerankProvider().rerank('q', [
+      { id: 'a', text: 'x' },
+      { id: 'b', text: 'y' },
+    ]);
+
+    for (const r of out) expect(r.score).toBeCloseTo(1 / 3, 10);
+  });
+
+  it('takes an explicit probability field at face value', async () => {
+    // The escape hatch: a field NAMED probability states its own scale, so it
+    // is never bucket arithmetic — `1` here really is certainty.
+    reply = {
+      answers: { r0: { probability: 1 }, r1: { probability: 0.3 }, r2: { score: 2 } },
+    };
+    const out = await new DecisionRerankProvider().rerank('q', candidates);
+    const byId = Object.fromEntries(out.map((r) => [r.id, r.score]));
+
+    expect(byId.alpha).toBe(1);
+    expect(byId.beta).toBeCloseTo(0.3, 10);
+    expect(byId.gamma).toBeCloseTo(2 / 3, 10);
+  });
+
   it('finds answers nested under a results envelope', async () => {
     reply = { results: { r0: { value: 'Highly relevant', probability: 0.5 } } };
     const out = await new DecisionRerankProvider().rerank('q', candidates);

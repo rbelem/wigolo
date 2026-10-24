@@ -90,6 +90,13 @@ describe('RERANKER_MODES', () => {
         (HOSTED_MODES as readonly string[]).includes(mode),
       );
       expect(RERANKER_MODES[mode].label.length, `${mode}.label`).toBeGreaterThan(0);
+      // The all-junk guard's floor depends on this: a hosted adapter reports a
+      // probability, an on-device cross-encoder reports a logit.
+      expect(RERANKER_MODES[mode].scoreDomain, `${mode}.scoreDomain`).toBe(
+        (HOSTED_MODES as readonly string[]).includes(mode) || SCORING_MODES.includes(mode as never)
+          ? ((HOSTED_MODES as readonly string[]).includes(mode) ? 'probability' : 'logit')
+          : 'logit',
+      );
     }
   });
 });

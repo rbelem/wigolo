@@ -5,6 +5,17 @@ https://api.deepseek.com/v1/tools/search`) and maps its results onto wigolo's
 `RawSearchResult` shape. `maxResults` becomes the API's `count`; `rerank_score`
 (0-3) divides by 3 into wigolo's 0-1 scale.
 
+**This is a worked example, not the recommended way to search DeepSeek.** wigolo
+now ships its own key-gated `deepseek` engine
+([`src/search/engines/deepseek.ts`](../../src/search/engines/deepseek.ts)), so if
+you only want DeepSeek results, set `DEEPSEEK_API_KEY` and use the core engine —
+no plugin needed. The example stays because it is the shortest non-trivial
+plugin in the tree (HTTP call, timeout, error mapping, result translation).
+
+It registers under the name **`deepseek-tools`**, not `deepseek`: two engines
+under one name make results indistinguishable, and the plugin loader drops a
+plugin whose engine name is already registered.
+
 `wigolo plugin add` accepts a git URL only, so from the repository root link
 this directory into your plugins dir and validate it:
 

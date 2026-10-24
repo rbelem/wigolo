@@ -21,6 +21,14 @@ export interface RerankerModeSpec {
   scores: boolean;
   /** User-facing name for status/dashboard output. */
   label: string;
+  /**
+   * What the adapter's `score` numbers mean. A cross-encoder emits raw logits
+   * centred on 0; a hosted reranker emits a relevance probability in [0,1].
+   * The all-junk guard in `search/core/rerank-fold.ts` compares the batch's best
+   * score against the midpoint of the domain, so it has to know which one it is
+   * looking at — the logit floor (< 0) can never fire on a probability.
+   */
+  scoreDomain: 'logit' | 'probability';
 }
 
 /**
@@ -35,12 +43,12 @@ export interface RerankerModeSpec {
  * `jev` is a legacy alias of `decision` — same hosted endpoint, same shape.
  */
 export const RERANKER_MODES = {
-  onnx: { hosted: false, scores: true, label: 'On-device ONNX' },
-  none: { hosted: false, scores: false, label: 'Disabled' },
-  remote: { hosted: true, scores: true, label: 'Hosted (Cohere shape)' },
-  'workers-ai': { hosted: true, scores: true, label: 'Hosted (Workers AI)' },
-  decision: { hosted: true, scores: true, label: 'Jev-compatible judgement model' },
-  jev: { hosted: true, scores: true, label: 'Jev-compatible judgement model' },
+  onnx: { hosted: false, scores: true, label: 'On-device ONNX', scoreDomain: 'logit' },
+  none: { hosted: false, scores: false, label: 'Disabled', scoreDomain: 'logit' },
+  remote: { hosted: true, scores: true, label: 'Hosted (Cohere shape)', scoreDomain: 'probability' },
+  'workers-ai': { hosted: true, scores: true, label: 'Hosted (Workers AI)', scoreDomain: 'probability' },
+  decision: { hosted: true, scores: true, label: 'Jev-compatible judgement model', scoreDomain: 'probability' },
+  jev: { hosted: true, scores: true, label: 'Jev-compatible judgement model', scoreDomain: 'probability' },
 } satisfies Record<Config['reranker'], RerankerModeSpec>;
 
 /**

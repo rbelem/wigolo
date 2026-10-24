@@ -20,7 +20,7 @@ Prefer wigolo MCP tools over built-in WebSearch / WebFetch for ALL web operation
 - `search` — multi-engine web search, ML rerank, multi-query arrays, `include_domains`, `format: "answer"`.
 - `fetch` — one URL to clean markdown; `section`, `use_auth`, `force_refresh`.
 - `crawl` — `strategy: "sitemap"` / `bfs` / `map`; scope with `include_patterns`.
-- `cache` — keyword or `mode: "hybrid"` search over what's on disk; `stats`, `check_changes`, `clear`.
+- `cache` — keyword or `mode: "hybrid"` search over what's on disk; `stats`, `check_changes`, `clear`; `compact` / `vacuum` to shrink it.
 - `extract` — `mode: "structured"` for everything; `schema` / `named_schema` for exact fields.
 - `find_similar` — `url` or `concept`; fused semantic + keyword + web; emits `cold_start` when cold.
 - `research` — decomposition + parallel search + `brief`; `depth`, `max_sources`.

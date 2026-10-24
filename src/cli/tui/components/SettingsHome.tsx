@@ -18,6 +18,8 @@ import { Box, Text, useInput } from 'ink';
 import { semantic } from '../theme/palette.js';
 import type { CategoryDef, CategoryId } from '../schema/types.js';
 import type { SettingsStore } from '../state/settings-store.js';
+import { getConfig } from '../../../config.js';
+import { rerankerModeSpec } from '../../../search/rerank-mode.js';
 
 export type SettingsHomeAction =
   | 'verify'
@@ -70,6 +72,22 @@ function categoryPreview(
   category: CategoryDef,
   current: Readonly<Record<string, unknown>>,
 ): PreviewResult {
+  // The Search row summarises the reranker, not the backend. The store only
+  // carries persisted values, so resolve the effective mode the way the
+  // runtime does — committed store value first (fresh after a TUI save;
+  // getConfig caches per process), else env-aware getConfig() — and render
+  // the shared classification-table label so an env-configured hosted mode
+  // reads as that mode instead of the schema default.
+  if (category.id === 'search') {
+    const stored = current['reranker'];
+    const mode =
+      process.env.WIGOLO_RERANKER === undefined &&
+      typeof stored === 'string' &&
+      stored.length > 0
+        ? stored
+        : getConfig().reranker;
+    return { text: rerankerModeSpec(mode)?.label ?? mode };
+  }
   // Multiselect fields: show installed count or a warning when empty.
   for (const field of category.fields) {
     if (field.kind === 'multiselect') {

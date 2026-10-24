@@ -3,7 +3,7 @@ import type { ConnectedAgent } from './status-agents.js';
 export interface StatusBag {
   version: string;
   searxng: 'ready' | 'failed' | 'pending';
-  reranker: 'ok' | 'missing';
+  reranker: 'ok' | 'hosted' | 'disabled' | 'missing';
   embeddings: 'ok' | 'missing';
   cache: { pages: number; bytes: number };
   agents: ConnectedAgent[];
@@ -41,8 +41,12 @@ export function formatStatus(bag: StatusBag): string {
   return lines.join('\n') + '\n';
 }
 
-function line(label: string, state: 'ok' | 'missing'): string {
+function line(label: string, state: StatusBag['reranker']): string {
   if (state === 'ok') return `✓ ${label} installed`;
+  // A hosted mode is configured without any local model — "not installed"
+  // would be wrong. `disabled` is the explicit `reranker: 'none'` choice.
+  if (state === 'hosted') return `✓ ${label} configured (hosted)`;
+  if (state === 'disabled') return `⊘ ${label} disabled`;
   return `⊘ ${label} not installed`;
 }
 

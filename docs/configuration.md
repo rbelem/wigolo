@@ -96,7 +96,7 @@ A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto`
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` (bundled on-device model), `remote` (self-hosted Cohere-shape endpoint), `workers-ai` (Cloudflare Workers AI shape), `decision` (any Jev-API-compatible decision model — see below; `jev` is an alias), or `none`. |
-| `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Model name sent to the remote endpoint; the ONNX model is bundled. |
+| `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Model name sent to the hosted endpoint; the ONNX model is bundled. |
 | `WIGOLO_RERANK_API_BASE` | unset | `remote` service base URL; Wigolo sends `POST <base>/rerank`. Required for `remote`. |
 | `WIGOLO_RERANK_API_KEY` | unset | Optional Bearer token for the `remote` endpoint. Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain; never persisted in `config.json`. |
 | `WIGOLO_RERANKER_REQUEST_TIMEOUT_MS` | `30000` | Remote request timeout in milliseconds. |
@@ -109,7 +109,7 @@ A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto`
 | `WIGOLO_EMBEDDING_API_KEY` | unset | Bearer token for a hosted embeddings endpoint (`WIGOLO_EMBEDDING_API_BASE` or `WIGOLO_EMBEDDING_PROVIDER=openai-compatible`). Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain. Never persisted in `config.json`. |
 | `WIGOLO_EMBEDDING_REQUEST_TIMEOUT_MS` | `30000` | Remote embedding request timeout in milliseconds. A bad value falls back to the default. |
 | `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker URL for `workers-ai` (Workers AI shape: `.../ai/run/@cf/baai/bge-reranker-base`) and for `decision` (any Jev-API-compatible endpoint, e.g. `https://opencode.ai/inference/systemone/v1/systemone`, a Cloudflare Clef endpoint, or a self-hosted Kev/Ollaya URL). `remote` uses `WIGOLO_RERANK_API_BASE` instead. |
-| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker. **Optional** for `decision`: self-hosted Kev/Ollaya commonly run unauthenticated. |
+| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker, for `workers-ai` and `decision` (`remote` uses `WIGOLO_RERANK_API_KEY`). **Optional** for `decision`: self-hosted Kev/Ollaya commonly run unauthenticated. |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Reranker model id. For `decision`: the vendor's model name (e.g. `jev-1.13`, `jev-1.13-free`, or a self-hosted name). |
 
 ### Env naming
@@ -147,12 +147,16 @@ export WIGOLO_EMBEDDING_BASE_URL=https://api.cloudflare.com/client/v4/accounts/$
 export WIGOLO_EMBEDDING_API_KEY=$CF_TOKEN
 export WIGOLO_EMBEDDING_MODEL=@cf/baai/bge-small-en-v1.5
 
-# Reranker → hosted. Two wire formats, many vendors:
-#   remote   = Workers AI reranker shape ({query, contexts})
-#   decision = any Jev-API-compatible decision model ({model, state, questions})
-#              — Jev, Clef, Kev, Decision Models, Ollaya, pplx-decider-style
-# Changing vendor = changing BASE_URL/MODEL/API_KEY. No code change.
-# NOTE: both are MODEL changes from the local ms-marco cross-encoder, so
+# Reranker → hosted. Three wire formats, many vendors:
+#   workers-ai = Workers AI reranker shape ({query, contexts, top_k})
+#                — BASE_URL .../ai/run/@cf/baai/bge-reranker-base
+#   decision   = any Jev-API-compatible decision model ({model, state, questions})
+#                — Jev, Clef, Kev, Decision Models, Ollaya, pplx-decider-style
+#   remote     = Cohere-shape /rerank ({model, query, documents, top_n})
+#                — any self-hosted Cohere-compatible server, via RERANK_API_BASE
+# workers-ai and decision share BASE_URL/_API_KEY; remote has its own pair.
+# Changing vendor = changing those vars plus MODEL. No code change.
+# NOTE: all three are MODEL changes from the local ms-marco cross-encoder, so
 # RERANK_RELEVANCE_THRESHOLD / RERANK_TIER_MARGIN must be re-derived before
 # trusting relevance_score or tier-1 results.
 export WIGOLO_RERANKER=decision
@@ -174,7 +178,7 @@ Whether a given gateway can serve each job:
 
 | Provider | Embeddings | Rerank |
 |---|---|---|
-| Cloudflare Workers AI | yes — `@cf/baai/bge-small-en-v1.5` (384, same model) | yes — `@cf/baai/bge-reranker-base` (`remote`); Clef also via `decision` |
+| Cloudflare Workers AI | yes — `@cf/baai/bge-small-en-v1.5` (384, same model) | yes — `@cf/baai/bge-reranker-base` (`workers-ai`); Clef also via `decision` |
 | OpenRouter | yes — `/embeddings`, accepts `dimensions` | no |
 | OpenCode Zen | **no** embeddings endpoint | **yes** — Jev at `/inference/systemone/v1/systemone` (`decision`) |
 | TypeSafe Jev (direct) | no | yes (`decision`) |
@@ -226,6 +230,24 @@ The vector store tags each row with a model id. That id combines the model name 
 A change to `WIGOLO_EMBEDDING_API_BASE` or `WIGOLO_EMBEDDING_MODEL` therefore hides every row from the old provider. `wigolo backfill` selects only URLs with no vector row, so it does not repair them. The CLI has no command that re-embeds one URL. Use the MCP `fetch` tool with `force_refresh: true` instead. A plain fetch returns from cache before the embed step runs.
 
 The model id does not change when the weights behind the same endpoint and model name change. Rows from the old weights stay in the index. To re-embed them, call the MCP `fetch` tool with `force_refresh: true` for each URL. To drop every vector, run `wigolo config --cleanup cache`. That command also deletes the cached pages.
+
+## Migrating a config from before the upstream rebase
+
+Before the rebase onto upstream v0.3.0, this fork spelled its Workers AI reranker `remote`. Upstream's `remote` is the Cohere-shape adapter described above and reads `WIGOLO_RERANK_API_BASE` / `WIGOLO_RERANK_API_KEY`, so a carry-over config that still says `WIGOLO_RERANKER=remote` plus `WIGOLO_RERANKER_BASE_URL` now points the new adapter at a Workers AI URL and fails. Two ways forward:
+
+```bash
+# Keep Workers AI: same endpoint variables, new mode name.
+export WIGOLO_RERANKER=workers-ai
+export WIGOLO_RERANKER_BASE_URL=https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/ai/run/@cf/baai/bge-reranker-base
+export WIGOLO_RERANKER_API_KEY=$CF_TOKEN
+
+# Or move to the Cohere-shape adapter, which has its own variables.
+export WIGOLO_RERANKER=remote
+export WIGOLO_RERANK_API_BASE=https://reranker.example.com/v1
+export WIGOLO_RERANK_API_KEY=...
+```
+
+The `custom` mode was removed with the rebase. It was a documented no-op that fell through to passthrough, so `WIGOLO_RERANKER=custom` now selects nothing that reranks — use `none` when the intent is to skip reranking, or one of the modes above when it is not.
 
 ## LLM providers (optional)
 

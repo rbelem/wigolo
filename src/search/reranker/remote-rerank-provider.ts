@@ -4,12 +4,29 @@ import { resolveRemoteBase } from '../../providers/remote-endpoint.js';
 
 type RemoteResult = { index?: unknown; relevance_score?: unknown; score?: unknown };
 
+/**
+ * The fork spelled its Workers AI reranker `remote` before the rebase onto
+ * upstream v0.3.0. Say so instead of the bare "requires WIGOLO_RERANK_API_BASE":
+ * otherwise a carry-over config looks like a missing setting and search quietly
+ * falls back to passthrough.
+ */
+function missingBaseMessage(config: Config): string {
+  if (!config.rerankerBaseUrl) return 'Remote reranker requires WIGOLO_RERANK_API_BASE';
+  return (
+    'WIGOLO_RERANKER=remote now means the Cohere-shape endpoint and reads ' +
+    'WIGOLO_RERANK_API_BASE. Your WIGOLO_RERANKER_BASE_URL is the Workers AI ' +
+    'adapter: set WIGOLO_RERANKER=workers-ai to keep it, or point ' +
+    'WIGOLO_RERANK_API_BASE at a Cohere /rerank service.'
+  );
+}
+
 /** Cohere-style POST /rerank adapter for a configured model service. */
 export class RemoteRerankProvider implements RerankProvider {
   readonly modelId: string;
   private readonly url: string;
 
   constructor(private readonly config: Config) {
+    if (!config.rerankApiBase?.trim()) throw new Error(missingBaseMessage(config));
     const base = resolveRemoteBase(config.rerankApiBase, {
       label: 'Remote reranker',
       varName: 'WIGOLO_RERANK_API_BASE',

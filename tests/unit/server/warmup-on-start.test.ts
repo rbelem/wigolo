@@ -91,11 +91,22 @@ describe('maybeEagerWarmup', () => {
       () => new Promise<boolean>((res) => { resolveEmbed = () => res(true); }),
     );
 
-    const before = Date.now();
     maybeEagerWarmup();
-    const elapsed = Date.now() - before;
 
-    expect(elapsed).toBeLessThan(50);
+    // Non-blocking proof by construction: the embed promise above never
+    // resolves, so a call that awaited it could only reach the sentinel.
+    // This replaced a wall-clock budget (elapsed < 50ms) that failed at 81ms
+    // under a loaded full-suite run while proving nothing the sentinel does.
+    let timer: NodeJS.Timeout | undefined;
+    const blocked = new Promise<'blocked'>((res) => {
+      timer = setTimeout(() => res('blocked'), 2_000);
+    });
+    const outcome = await Promise.race([
+      Promise.resolve().then(() => 'returned' as const),
+      blocked,
+    ]);
+    clearTimeout(timer);
+    expect(outcome).toBe('returned');
     expect(_getWarmupPendingForTest()).not.toBeNull();
 
     // Drain microtasks so the warmEmbed body runs and calls ensureProviderReady.

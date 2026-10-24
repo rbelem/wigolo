@@ -7,6 +7,7 @@ import { BraveEngine } from '../../engines/brave.js';
 import { DeepseekEngine } from '../../engines/deepseek.js';
 import { CratesIoEngine } from '../../engines/crates-io.js';
 import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 import { getConfig } from '../../../config.js';
 
 // Code-focused vertical. GitHub-code (when a token is configured) +
@@ -92,6 +93,8 @@ export function getCodeEngines(): EngineEntry[] {
     secondary: true,
     quality: 'high',
   });
+
+  assertPoolCoversCoreNames('code', entries.map(e => e.engine.name));
 
   cached = entries;
   return cached;

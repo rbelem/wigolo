@@ -4,6 +4,7 @@ import { BingNewsEngine } from '../../engines/bing-news.js';
 import { DuckDuckGoEngine } from '../../engines/duckduckgo.js';
 import { MojeekEngine } from '../../engines/mojeek.js';
 import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 import { RssFeedEngine } from '../rss/rss-engine.js';
 import { loadFeedConfig } from '../rss/feed-config.js';
 import { countFeedItems } from '../rss/feed-store.js';
@@ -71,6 +72,8 @@ export function getNewsEngines(): EngineEntry[] {
     });
     log.info('news vertical: rss-feed engine attached');
   }
+
+  assertPoolCoversCoreNames('news', entries.map(e => e.engine.name));
 
   cached = entries;
   return cached;

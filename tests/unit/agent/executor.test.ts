@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resetConfig } from '../../../src/config.js';
 import type { AgentStep, AgentSource, SearchEngine, RawSearchResult } from '../../../src/types.js';
 import type { SmartRouter } from '../../../src/fetch/router.js';
 import type { AgentPlan } from '../../../src/agent/planner.js';
@@ -25,7 +26,12 @@ vi.mock('../../../src/cache/store.js', () => ({
   normalizeUrl: vi.fn((url: string) => url),
 }));
 
-const { executeAgentPlan } = await import('../../../src/agent/executor.js');
+// Relevance scoring is gated on the shared reranker-mode table; stub the
+// reranker so the gate is observable without a model.
+const rerankResultsMock = vi.hoisted(() => vi.fn(async (_q: string, results: unknown[]) => results));
+vi.mock('../../../src/search/rerank.js', () => ({ rerankResults: rerankResultsMock }));
+
+const { executeAgentPlan, scoreAndFilterSources } = await import('../../../src/agent/executor.js');
 
 function createStubEngine(results: RawSearchResult[] = []): SearchEngine {
   return {
@@ -247,5 +253,54 @@ describe('executeAgentPlan', () => {
 
     expect(result.sources.length).toBe(1);
     expect(result.sources[0].fetched).toBe(true);
+  });
+});
+
+// The pre-existing gate was `cfg.reranker !== 'none'`, so any value that was not
+// a real mode counted as "reranker on" and passed sources through unranked. The
+// gate now reads the shared reranker-mode table.
+describe('scoreAndFilterSources reranker gate', () => {
+  const originalReranker = process.env.WIGOLO_RERANKER;
+  const sources = [{ url: 'https://example.com/1', title: 'cats', body: 'cats and dogs' }];
+
+  beforeEach(() => {
+    rerankResultsMock.mockClear();
+    resetConfig();
+  });
+
+  afterEach(() => {
+    if (originalReranker === undefined) delete process.env.WIGOLO_RERANKER;
+    else process.env.WIGOLO_RERANKER = originalReranker;
+    resetConfig();
+  });
+
+  it('scores through the reranker for a hosted mode', async () => {
+    process.env.WIGOLO_RERANKER = 'workers-ai';
+    resetConfig();
+
+    const { kept } = await scoreAndFilterSources('cats', [...sources], { threshold: 0 });
+
+    expect(rerankResultsMock).toHaveBeenCalledTimes(1);
+    expect(kept).toHaveLength(1);
+  });
+
+  it('skips the reranker for reranker: none', async () => {
+    process.env.WIGOLO_RERANKER = 'none';
+    resetConfig();
+
+    await scoreAndFilterSources('cats', [...sources], { threshold: 0 });
+
+    expect(rerankResultsMock).not.toHaveBeenCalled();
+  });
+
+  it('skips the reranker for an unknown mode instead of calling it', async () => {
+    // config.ts normalises an unknown value to 'none' too; this keeps the gate
+    // honest if a caller ever hands the executor an unvalidated mode.
+    process.env.WIGOLO_RERANKER = 'cutom';
+    resetConfig();
+
+    await scoreAndFilterSources('cats', [...sources], { threshold: 0 });
+
+    expect(rerankResultsMock).not.toHaveBeenCalled();
   });
 });

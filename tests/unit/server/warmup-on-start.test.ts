@@ -116,6 +116,22 @@ describe('maybeEagerWarmup', () => {
     (resolveEmbed as () => void)();
   });
 
+  it('skips rerank warmup for a hosted mode (nothing local to load)', async () => {
+    // Added with the shared mode table: behaviour is unchanged (a hosted mode
+    // never warmed a local model) but the gate is now derived from the table
+    // rather than a second `!== 'onnx'` comparison.
+    process.env.WIGOLO_EAGER_WARMUP = '1';
+    process.env.WIGOLO_RERANKER = 'workers-ai';
+    resetConfig();
+
+    maybeEagerWarmup();
+    await _getWarmupPendingForTest();
+
+    expect(ensureProviderReady).toHaveBeenCalledTimes(1);
+    expect(getRerankProvider).not.toHaveBeenCalled();
+    expect(rerankWarmup).not.toHaveBeenCalled();
+  });
+
   it('still attempts rerank when embed warmup throws', async () => {
     process.env.WIGOLO_EAGER_WARMUP = '1';
     ensureProviderReady.mockRejectedValueOnce(new Error('embed boom'));

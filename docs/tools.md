@@ -103,6 +103,8 @@ Query the persistent local knowledge cache — every page wigolo has already see
 | `stats` | boolean | Totals: URL count, size, date range. |
 | `clear` | boolean | Delete matching entries (requires at least one filter). |
 | `check_changes` | boolean | Re-fetch matching URLs and report changed/unchanged with diff summaries. |
+| `compact` | boolean | Recompress legacy plain-text cached HTML into gzip storage; returns `compacted` (`rows_compressed`, `bytes_before`, `bytes_after`). Idempotent maintenance that rewrites most of the database. |
+| `vacuum` | boolean | With `compact`, rewrite the database file afterwards so freed pages return to the filesystem (~2× the database size in transient disk). |
 | `limit` | number | Default 20. |
 
 ```json

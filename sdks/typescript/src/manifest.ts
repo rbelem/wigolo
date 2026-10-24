@@ -128,6 +128,8 @@ export const manifest = {
       'since',
       'clear',
       'stats',
+      'compact',
+      'vacuum',
       'check_changes',
       'mode',
       'limit',

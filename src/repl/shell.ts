@@ -135,6 +135,17 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
     completer: (line: string) => complete(line),
   });
 
+  // Node 24+ throws `readline was closed` from `prompt()` once the interface is
+  // closed; Node 20/22 tolerated it. The loop below prompts AFTER awaiting a
+  // command, so piped input that ends mid-command (or a Ctrl-D during a slow
+  // fetch) reaches a closed interface — nine REPL tests failed on Node 26 and
+  // passed on 22 for exactly this. Track closure and prompt only while live.
+  let closed = false;
+  rl.once('close', () => { closed = true; });
+  const prompt = (): void => {
+    if (!closed) rl.prompt();
+  };
+
   const history = loadHistory(historyPath);
   let failures = 0;
 
@@ -158,13 +169,13 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
 
   log.info('shell started', { jsonMode, historyPath, isTty });
   say('wigolo interactive shell. Type "help" for commands, "exit" to quit.');
-  rl.prompt();
+  prompt();
 
   for await (const line of rl) {
     const trimmed = line.trim();
 
     if (!trimmed) {
-      rl.prompt();
+      prompt();
       continue;
     }
 
@@ -185,7 +196,7 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
 
     if (parsed.command === 'help' || parsed.command === '.help') {
       say(getHelpText());
-      rl.prompt();
+      prompt();
       continue;
     }
 
@@ -195,11 +206,11 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
       else if (arg === 'off') jsonMode = false;
       else {
         say('Usage: .json on|off');
-        rl.prompt();
+        prompt();
         continue;
       }
       say(`JSON output ${jsonMode ? 'on' : 'off'}.`);
-      rl.prompt();
+      prompt();
       continue;
     }
 
@@ -208,13 +219,13 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
       for (const entry of recent) {
         say(`  ${entry}`);
       }
-      rl.prompt();
+      prompt();
       continue;
     }
 
     if (parsed.command === '.clear') {
       say('');
-      rl.prompt();
+      prompt();
       continue;
     }
 
@@ -293,7 +304,7 @@ export async function startShell(deps: ReplDeps, options: ShellOptions = {}): Pr
       say(`Error: ${msg}`);
     }
 
-    rl.prompt();
+    prompt();
   }
 
   log.info('shell input stream ended', { failures });

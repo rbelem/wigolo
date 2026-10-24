@@ -64,7 +64,8 @@ const RESPONSE_FIELDS: Record<ToolName, Record<string, string>> = {
     urls: 'array', sitemap_found: 'boolean', response_time_ms: 'number', error: 'string',
   },
   cache: {
-    results: 'array', stats: 'object', cleared: 'number', changes: 'array', error: 'string',
+    results: 'array', stats: 'object', cleared: 'number', changes: 'array',
+    compacted: 'object', error: 'string',
   },
   extract: {
     data: 'object', source_url: 'string', mode: 'string', warnings: 'array',

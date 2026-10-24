@@ -41,7 +41,7 @@ vi.mock('../../src/providers/rerank-provider.js', () => ({
 // Config mock: force reranker to 'onnx' so the fold gate fires in a clean test
 // environment regardless of WIGOLO_RERANKER env var. The reranker-none test
 // overrides configReranker to 'none' for the duration of that single test.
-let configReranker: 'onnx' | 'remote' | 'none' | 'custom' = 'onnx';
+let configReranker: 'onnx' | 'remote' | 'none' = 'onnx';
 vi.mock('../../src/config.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../../src/config.js')>();
   return {

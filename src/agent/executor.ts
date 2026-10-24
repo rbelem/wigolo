@@ -5,6 +5,7 @@ import { cacheContent } from '../cache/store.js';
 import { rerankResults } from '../search/rerank.js';
 import { rankAgentSearchResults } from './rank.js';
 import { getConfig } from '../config.js';
+import { rerankerModeSpec } from '../search/rerank-mode.js';
 import type { AgentPlan } from './planner.js';
 import type { AgentSource, AgentStep, SearchEngine, RawSearchResult } from '../types.js';
 import type { SmartRouter } from '../fetch/router.js';
@@ -75,7 +76,10 @@ export async function scoreAndFilterSources<T extends AgentSourceLike>(
   if (sources.length === 0) return { kept: [], excluded: [] };
 
   const cfg = getConfig();
-  const useReranker = cfg.reranker !== 'none';
+  // The shared table, not `!== 'none'`: a typo'd/unknown mode has no
+  // implementation behind it, so it must not count as "reranker on" and let
+  // sources through unranked.
+  const useReranker = rerankerModeSpec(cfg.reranker)?.scores ?? false;
   const scoreByUrl = new Map<string, number>();
 
   if (useReranker) {
@@ -187,12 +191,14 @@ export async function executeAgentPlan(
     // fallback is too noisy to drop sources from on its own.
     const trimmedPrompt = prompt.trim();
     const cfg = getConfig();
-    if (trimmedPrompt.length > 0 && cfg.reranker === 'none') {
+    const rerankerScores = rerankerModeSpec(cfg.reranker)?.scores ?? false;
+    if (trimmedPrompt.length > 0 && !rerankerScores) {
       log.debug(
-        'agent post-fetch relevance filter disabled (reranker=none); relying on pre-fetch filter only',
+        'agent post-fetch relevance filter disabled (no scoring reranker); relying on pre-fetch filter only',
+        { reranker: cfg.reranker },
       );
     }
-    if (trimmedPrompt.length > 0 && cfg.reranker !== 'none') {
+    if (trimmedPrompt.length > 0 && rerankerScores) {
       const fetched = sources.filter((s) => s.fetched && s.markdown_content.length > 0);
       const candidates: AgentSourceLike[] = fetched.map((s) => ({
         url: s.url,

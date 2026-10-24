@@ -111,7 +111,10 @@ export async function foldRerankIntoOrdering(
       }
     }
   } catch (err) {
-    log.debug('rerank-fold failed, keeping composite ordering', { error: String(err) });
+    // warn, not debug: a hosted reranker that cannot be constructed (a moved
+    // mode, a missing base URL) degrades every search to unranked ordering, and
+    // at debug nobody ever sees why relevance got worse.
+    log.warn('rerank-fold failed, keeping composite ordering', { error: String(err) });
     return results;
   }
   // candidates the provider never scored -> treat as irrelevant (below the

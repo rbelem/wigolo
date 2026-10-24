@@ -10,6 +10,12 @@
 // timeout still gets a deadline instead of hanging on a stalled socket.
 const DEFAULT_TIMEOUT_MS = 10000;
 
+// wigolo's core engine set already has a `deepseek` engine
+// (src/search/engines/deepseek.ts), so this plugin must not claim that name:
+// results from a same-named engine cannot be told apart, and the plugin loader
+// drops a plugin that collides with an already-registered engine name.
+const ENGINE_NAME = 'deepseek-tools';
+
 function asString(value) {
   return typeof value === 'string' ? value : '';
 }
@@ -33,7 +39,9 @@ function toResult(item, title, url) {
     snippet: summary || asString(item.snippet),
     // DeepSeek documents rerank_score on a 0-3 scale; wigolo scores are 0-1.
     relevance_score: Number.isFinite(item.rerank_score) ? item.rerank_score / 3 : 0,
-    engine: 'deepseek',
+    // Not bare `deepseek`: wigolo now ships its own key-gated `deepseek`
+    // engine, and two engines under one name make results indistinguishable.
+    engine: ENGINE_NAME,
   };
   if (date) result.published_date = date;
 
@@ -93,7 +101,7 @@ export function createDeepSeekEngine({
   timeoutMs = DEFAULT_TIMEOUT_MS,
 } = {}) {
   return {
-    name: 'deepseek',
+    name: ENGINE_NAME,
 
     async search(query, options = {}) {
       if (!key) throw new Error('DEEPSEEK_API_KEY is not set');
@@ -114,7 +122,7 @@ export function createDeepSeekEngine({
 }
 
 export const searchEngine = {
-  name: 'deepseek',
+  name: ENGINE_NAME,
   search(query, options) {
     return createDeepSeekEngine().search(query, options);
   },

@@ -181,6 +181,12 @@ export class DecisionRerankProvider implements RerankProvider {
       apiKey: this.apiKey,
       timeoutMs: decisionTimeoutMs(),
       label: 'decision rerank',
+      // ONE attempt, not the default two. A timeout is classified transient by
+      // withFetchRetry, so the default spends two full
+      // WIGOLO_RERANKER_REQUEST_TIMEOUT_MS periods before search falls back to
+      // its pre-rerank ordering. Reranking is a quality optimisation, not
+      // correctness — it must fail fast.
+      attempts: 1,
     });
 
     const scored = interpret(payload, indexToId);
@@ -219,12 +225,15 @@ function findAnswers(payload: unknown): Record<string, unknown> | null {
  *  1. A probability map over ALL options (the shape the docs describe) →
  *     expected bucket position, which is the smoothest signal.
  *  2. A chosen `{label|value|choice, probability}` → (index + prob) / count.
- *  3. A bare numeric `score` → used as-is.
+ *  3. An explicit `probability`/`confidence` field → used as-is; that field
+ *     NAME is what makes it unambiguous (see numericScore()).
+ *  4. A bare numeric `score`/`value`/answer → bucket index or probability,
+ *     disambiguated by integrality.
  * An unrecognised label yields 0.5 rather than 0, so a parsing surprise
  * degrades ordering instead of inverting it.
  */
 function toScore(answer: unknown): number | null {
-  if (typeof answer === 'number') return clamp01(answer);
+  if (typeof answer === 'number') return numericScore(answer);
   const rec = asRecord(answer);
   if (!rec) return null;
 
@@ -242,26 +251,46 @@ function toScore(answer: unknown): number | null {
     return clamp01(idx / (RELEVANCE_BUCKETS.length - 1));
   }
 
+  // A field literally named probability/confidence states its own scale, so it
+  // escapes the bucket-index reading below — this is the escape hatch for a
+  // vendor whose 0/1 really does mean no/yes certainty rather than buckets.
+  const probability = rec.probability ?? rec.confidence;
+  if (typeof probability === 'number') return clamp01(probability);
+
   const numeric = rec.score ?? rec.value;
-  return typeof numeric === 'number' ? scaleGuard(numeric) : null;
+  return typeof numeric === 'number' ? numericScore(numeric) : null;
 }
 
 /**
- * Guard a bare numeric score against scale saturation.
+ * Interpret a bare numeric score.
  *
- * `clamp01` alone maps a vendor answering on a 0-100 scale (`score: 85`) or as
- * a bucket index (`value: 2`) to 1.0 for every candidate — total, silent loss
- * of ordering. Accept [0,1] as-is, treat a small integer as a bucket index, and
- * refuse anything else with a diagnosable error rather than flattening it.
+ * This wire format answers a `score` question with a BUCKET INDEX, so a whole
+ * number in range is read as an index: `0` is Irrelevant (0.0), `1` is
+ * Marginal (1/3), `3` is Highly relevant (1.0). Reading an integer as a
+ * probability — the previous behaviour — scored a "bucket 1 = Marginal" answer
+ * as certainty and destroyed the ordering, and it is indistinguishable from a
+ * real probability 1 without a field name to go on.
+ *
+ * Only a NON-INTEGER value can be a probability, and only in [0,1]. A vendor
+ * that means a probability should send it in `probability` (see toScore);
+ * a vendor answering on a 0-100 scale still fails loudly here rather than
+ * flattening every candidate to 1.0.
  */
-function scaleGuard(n: number): number {
-  if (n >= 0 && n <= 1) return n;
-  if (Number.isInteger(n) && n >= 0 && n < RELEVANCE_BUCKETS.length) {
+function numericScore(n: number): number {
+  if (!Number.isInteger(n)) {
+    if (n >= 0 && n <= 1) return n;
+    throw new Error(
+      `decision rerank returned a non-integral score outside [0,1] (${n}); ` +
+        `a bucket index must be a whole number in [0,${RELEVANCE_BUCKETS.length - 1}] ` +
+        'and a probability must be in [0,1]',
+    );
+  }
+  if (n >= 0 && n < RELEVANCE_BUCKETS.length) {
     return n / (RELEVANCE_BUCKETS.length - 1);
   }
   throw new Error(
-    `decision rerank returned an out-of-range score (${n}); expected a probability in [0,1] ` +
-      `or a bucket index in [0,${RELEVANCE_BUCKETS.length - 1}]`,
+    `decision rerank returned an out-of-range score (${n}); expected a bucket index ` +
+      `in [0,${RELEVANCE_BUCKETS.length - 1}] or a probability in [0,1]`,
   );
 }
 

@@ -1,4 +1,6 @@
 import type { RawSearchResult, EvidenceScore } from '../../types.js';
+import { getConfig } from '../../config.js';
+import { rerankerModeSpec } from '../rerank-mode.js';
 import { getRerankProvider } from '../../providers/rerank-provider.js';
 import { detectRareTerms, isRareTermMiss } from './rare-terms.js';
 import { lexicalAlignment } from './lexical-alignment.js';
@@ -26,6 +28,21 @@ export const RERANK_BLEND_RERANK = 0.5;
 // the rerank normaliser collapses to a neutral 0.5. Tier assignment (from raw
 // logits vs RERANK_RELEVANCE_THRESHOLD + RERANK_TIER_MARGIN) is unchanged.
 export const RERANK_CALIBRATION_FLOOR = RERANK_RELEVANCE_THRESHOLD;
+// The same all-junk idea expressed on a hosted reranker's scale. A Cohere- or
+// Workers-AI-shaped host returns a relevance probability, so the logit floor
+// above can never fire (every score is >= 0) and an all-junk batch kept getting
+// min-max stretched — precisely the saturation RERANK_CALIBRATION_FLOOR exists
+// to prevent. 0.5 is the sigmoid midpoint expressed as a probability: nothing
+// in a batch whose BEST member is below it is more likely relevant than not.
+// Re-derive if a host's scale turns out not to be centred there.
+export const RERANK_PROBABILITY_FLOOR = 0.5;
+// Ceiling on the time one fold may spend calling a hosted reranker. The fold
+// issues one request per query variant, sequentially, and an unresponsive
+// endpoint costs a full request timeout each; without a budget a four-variant
+// query can stall for minutes before falling back to composite ordering. On
+// expiry the batch keeps the scores already gathered and the remaining variants
+// are dropped — the hedge degrades, the search does not hang.
+export const RERANK_FOLD_BUDGET_MS = 8_000;
 
 // Build the cross-encoder input for one result. Title + snippet ALONE let a
 // short off-topic snippet game the reranker into a high logit (the junk-
@@ -55,6 +72,10 @@ export interface FoldOptions {
   deep?: boolean;
   maxResults?: number;
   rerank?: RerankFn;
+  /** Override the per-fold time budget (tests use a tiny one). */
+  budgetMs?: number;
+  /** Clock seam so the budget is testable without sleeping. */
+  now?: () => number;
 }
 
 function defaultRerankFn(): RerankFn {
@@ -102,9 +123,22 @@ export async function foldRerankIntoOrdering(
 
   // max logit per candidate across all queries -> preserves multi-query hedge.
   const logits = new Array<number>(windowResults.length).fill(-Infinity);
+  const budgetMs = opts.budgetMs ?? RERANK_FOLD_BUDGET_MS;
+  const now = opts.now ?? Date.now;
+  const startedAt = now();
   try {
-    for (const q of queries) {
-      const scoreMap = await rerankFn(q, candidates);
+    for (let qi = 0; qi < queries.length; qi++) {
+      // Check between variants, never before the first: one slow call should
+      // not void the whole hedge, but the remaining ones must not stack up.
+      if (qi > 0 && now() - startedAt > budgetMs) {
+        log.debug('rerank-fold budget exhausted, keeping the variants already scored', {
+          queries: queries.length,
+          completed: qi,
+          budgetMs,
+        });
+        break;
+      }
+      const scoreMap = await rerankFn(queries[qi], candidates);
       for (let i = 0; i < windowResults.length; i++) {
         const s = scoreMap.get(String(i));
         if (typeof s === 'number' && s > logits[i]) logits[i] = s;
@@ -125,13 +159,19 @@ export async function foldRerankIntoOrdering(
   }
 
   const normComposite = makeNormaliser(windowResults.map((res) => res.relevance_score));
-  // Blend-inflation guard (gate b): if the batch's best logit is strictly below
-  // the calibration floor, every member is confident junk — the min-max stretch
-  // is meaningless and would only inflate the least-bad junk. Use a neutral 0.5
-  // rerank blend for the whole batch instead. Otherwise stretch normally.
+  // Blend-inflation guard (gate b): if the batch's best score is strictly below
+  // the floor for the adapter's score domain, every member is confident junk —
+  // the min-max stretch is meaningless and would only inflate the least-bad
+  // junk. Use a neutral 0.5 rerank blend for the whole batch instead. The floor
+  // is per-domain: a hosted reranker reports a probability, so the logit floor
+  // (< 0) could never fire on it and the guard was dead for every hosted mode.
+  const junkFloor =
+    rerankerModeSpec(getConfig().reranker)?.scoreDomain === 'probability'
+      ? RERANK_PROBABILITY_FLOOR
+      : RERANK_CALIBRATION_FLOOR;
   const maxLogit = Math.max(...logits);
   const normRerank =
-    Number.isFinite(maxLogit) && maxLogit < RERANK_CALIBRATION_FLOOR
+    Number.isFinite(maxLogit) && maxLogit < junkFloor
       ? () => 0.5
       : makeNormaliser(logits);
 

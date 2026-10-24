@@ -58,6 +58,7 @@ The local knowledge store — query, inspect, and maintain what wigolo has alrea
 - `query`: keyword search over cached bodies. `url_pattern`: URL glob. `since`: ISO date bound.
 - `mode`: `fts` (keyword, default) / `hybrid` (keyword + semantic). `limit` default 20.
 - `stats: true` returns totals; `check_changes: true` re-fetches matching URLs and reports changes.
+- `compact: true` recompresses legacy cached HTML into gzip storage (idempotent, rewrites most of the database); `vacuum: true` then hands the freed pages back to the filesystem.
 - `clear: true` deletes matching entries (requires a filter).
 
 ```json

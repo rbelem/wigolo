@@ -35,8 +35,10 @@ describe('HelpOverlay', () => {
     const { stdin } = render(<HelpOverlay onClose={onClose} />);
     await wait(20);
     stdin.write('\x1b'); // Esc
-    await wait(30);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    // Poll instead of sleeping a fixed 30ms: under full-suite load the input
+    // callback can land later than any constant that is short enough to keep
+    // the suite fast, which made this the suite's one intermittent failure.
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   it('calls onClose when ? is pressed', async () => {
@@ -44,8 +46,7 @@ describe('HelpOverlay', () => {
     const { stdin } = render(<HelpOverlay onClose={onClose} />);
     await wait(20);
     stdin.write('?');
-    await wait(30);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
   it('renders Keyboard Shortcuts title', async () => {

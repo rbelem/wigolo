@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.18.4/.schema/devbox.schema.json",
+  "description": "wigolo test/run environment: Node 22 (matches CI) plus the runtime libraries Playwright's bundled Chromium needs on NixOS, which has no /usr/lib.",
+  "packages": {
+    "nodejs_22": "latest",
+    "path:devbox.d/playwright-libs": {}
+  },
+  "shell": {
+    "init_hook": [
+      "# devbox's own package farm drops glib's and dbus's /lib — the two the browser needs most — so the libs come from a buildEnv in devbox.d/playwright-libs.",
+      "export LD_LIBRARY_PATH=\"$(nix build --no-link --print-out-paths ./devbox.d/playwright-libs)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\""
+    ],
+    "scripts": {
+      "test": "npm run build && bash scripts/test-hermetic.sh run",
+      "test:unit": "bash scripts/test-hermetic.sh run tests/unit",
+      "test:integration": "npm run build && bash scripts/test-hermetic.sh run tests/integration",
+      "test:e2e": "npm run build && bash scripts/test-hermetic.sh run tests/e2e",
+      "lint": "tsc --noEmit",
+      "build": "npm run build"
+    }
+  }
+}

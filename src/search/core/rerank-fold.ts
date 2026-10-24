@@ -37,6 +37,13 @@ export const RERANK_CALIBRATION_FLOOR = RERANK_RELEVANCE_THRESHOLD;
 // in a batch whose BEST member is below it is more likely relevant than not.
 // Re-derive if a host's scale turns out not to be centred there.
 export const RERANK_PROBABILITY_FLOOR = 0.5;
+// Tier-1 cut for a probability-domain adapter. It coincides numerically with the
+// logit cut below (a logit of 0 is p≈0.5), which is why hosted ordering works at
+// all — but it is NOT calibrated: no threshold has been measured against any
+// supported hosted model, so treat hosted tier-1 as "the host thinks this is
+// more likely relevant than not", not as a tuned boundary. The local
+// cross-encoder's thresholds are the only ones derived from data.
+export const RERANK_PROBABILITY_TIER_CUT = 0.5;
 // Ceiling on the time one fold may spend calling a hosted reranker. The fold
 // issues one request per query variant, sequentially, and an unresponsive
 // endpoint costs a full request timeout each; without a budget a four-variant
@@ -77,6 +84,8 @@ export interface FoldOptions {
   budgetMs?: number;
   /** Clock seam so the budget is testable without sleeping. */
   now?: () => number;
+  /** Score scale for an injected rerank fn (otherwise taken from the adapter). */
+  scoreDomain?: 'logit' | 'probability';
 }
 
 /** Sentinel for "the variant did not answer before the fold's deadline". */
@@ -161,9 +170,12 @@ export async function foldRerankIntoOrdering(
   // call includes a download (fresh install) or a session reload after idle
   // eviction, and charging that to the rerank budget silently dropped every
   // later query variant on the very queries the README recommends.
+  // The adapter declares its own score scale; the config mode is only the
+  // fallback for an injected rerank fn, which has no adapter to ask.
+  let declaredDomain: 'logit' | 'probability' | undefined = opts.scoreDomain;
   if (!opts.rerank) {
     try {
-      await getRerankProvider();
+      declaredDomain = (await getRerankProvider()).scoreDomain ?? declaredDomain;
     } catch {
       // Leave the reporting to the first real call, which knows the mode.
     }
@@ -218,11 +230,27 @@ export async function foldRerankIntoOrdering(
       break;
     }
   }
-  // candidates the provider never scored -> treat as irrelevant (below the
-  // tier threshold), not relevant. Only bites a misbehaving injected rerank
-  // fn; the default provider scores every candidate (topK = candidates.length).
+  // A host that DECLARED a probability but answered outside [0,1] is not on the
+  // scale it claims (a self-hosted Cohere-shaped endpoint may return logits).
+  // Trust the numbers over the declaration: score the batch on the logit scale
+  // rather than clamping every candidate into a meaningless 1.0.
+  let domain: 'logit' | 'probability' =
+    declaredDomain ?? rerankerModeSpec(getConfig().reranker)?.scoreDomain ?? 'logit';
+  const observed = logits.filter((v) => Number.isFinite(v));
+  if (domain === 'probability' && observed.some((v) => v < 0 || v > 1)) {
+    log.warn('reranker declared a probability scale but answered outside [0,1]; scoring it as logits', {
+      min: Math.min(...observed),
+      max: Math.max(...observed),
+    });
+    domain = 'logit';
+  }
+
+  // Candidates the provider never scored -> irrelevant, expressed on the batch's
+  // own scale (0 is the bottom of a probability scale, not -1). Only bites a
+  // misbehaving injected rerank fn; the default provider scores every candidate.
+  const missingScore = domain === 'probability' ? 0 : RERANK_RELEVANCE_THRESHOLD - 1;
   for (let i = 0; i < logits.length; i++) {
-    if (!Number.isFinite(logits[i])) logits[i] = RERANK_RELEVANCE_THRESHOLD - 1;
+    if (!Number.isFinite(logits[i])) logits[i] = missingScore;
   }
 
   const normComposite = makeNormaliser(windowResults.map((res) => res.relevance_score));
@@ -232,10 +260,11 @@ export async function foldRerankIntoOrdering(
   // junk. Use a neutral 0.5 rerank blend for the whole batch instead. The floor
   // is per-domain: a hosted reranker reports a probability, so the logit floor
   // (< 0) could never fire on it and the guard was dead for every hosted mode.
-  const junkFloor =
-    rerankerModeSpec(getConfig().reranker)?.scoreDomain === 'probability'
-      ? RERANK_PROBABILITY_FLOOR
-      : RERANK_CALIBRATION_FLOOR;
+  const junkFloor = domain === 'probability' ? RERANK_PROBABILITY_FLOOR : RERANK_CALIBRATION_FLOOR;
+  const tierCut =
+    domain === 'probability'
+      ? RERANK_PROBABILITY_TIER_CUT
+      : RERANK_RELEVANCE_THRESHOLD + RERANK_TIER_MARGIN;
   const maxLogit = Math.max(...logits);
   const normRerank =
     Number.isFinite(maxLogit) && maxLogit < junkFloor
@@ -280,7 +309,7 @@ export async function foldRerankIntoOrdering(
   );
 
   const scored = windowResults.map((res, i) => {
-    const logitTier = logits[i] > RERANK_RELEVANCE_THRESHOLD + RERANK_TIER_MARGIN ? 1 : 0;
+    const logitTier = logits[i] > tierCut ? 1 : 0;
     // Guarded to tier-0 only when the query carries a compound token AND this
     // result matches NONE of them across every query variant (a true miss).
     const rareMiss =

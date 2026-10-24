@@ -109,6 +109,16 @@ A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto`
 | `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker, for `workers-ai` and `decision` (`remote` uses `WIGOLO_RERANK_API_KEY`). **Optional** for `decision`: self-hosted Kev/Ollaya commonly run unauthenticated. |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Reranker model id. For `decision`: the vendor's model name (e.g. `jev-1.13`, `jev-1.13-free`, or a self-hosted name). |
 
+> **Hosted reranking is uncalibrated.** The tier-1 boundary for a hosted adapter
+> (`remote`, `workers-ai`, `decision`/`jev`) is 0.5 on the host's own relevance
+> scale. That number is the logistic midpoint, NOT a threshold measured against
+> any particular model, so a hosted tier-1 result means "the endpoint thinks this
+> is more likely relevant than not" — not that it cleared a tuned bar. Only the
+> on-device cross-encoder's thresholds are derived from data. If relevance
+> ordering matters more than latency, keep `WIGOLO_RERANKER=onnx`; if a hosted
+> model returns scores outside [0,1] it is detected and scored as logits rather
+> than silently clamped.
+
 ### Env naming
 
 Every knob on this surface is `WIGOLO_<AREA>_<THING>` so `env | grep WIGOLO_`

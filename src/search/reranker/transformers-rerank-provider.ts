@@ -56,6 +56,8 @@ export class TransformersRerankProvider implements RerankProvider {
   /** Number of reranks currently running — eviction defers while non-zero. */
   private inFlight = 0;
   readonly modelId: string;
+  /** Raw cross-encoder output: centred on 0, unbounded. */
+  readonly scoreDomain = 'logit' as const;
 
   constructor() {
     this.modelId = 'Xenova/ms-marco-MiniLM-L-6-v2';

@@ -30,6 +30,21 @@ export interface RerankProvider {
   ): Promise<RerankResult[]>;
   /** Model identifier (for cache invalidation / provenance). */
   readonly modelId: string;
+  /**
+   * What `score` means, when the adapter knows.
+   *
+   * A cross-encoder emits raw logits centred on 0; a hosted relevance model
+   * returns a probability in [0,1]. The all-junk guard in
+   * `search/core/rerank-fold.ts` compares the batch's best score against the
+   * midpoint of the scale, so it has to know which one it is looking at.
+   *
+   * Declared by the ADAPTER, not by the config mode: the mode names the wire
+   * protocol, but what a host puts in the `score` field is a property of that
+   * host, and a self-hosted Cohere-shaped endpoint is free to return logits.
+   * Undefined means "this adapter does not promise a scale" — the fold then
+   * falls back to the mode's declaration and treats the batch adaptively.
+   */
+  readonly scoreDomain?: 'logit' | 'probability';
 }
 
 let cached: Promise<RerankProvider> | null = null;

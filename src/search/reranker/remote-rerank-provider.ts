@@ -53,6 +53,8 @@ function rerankError(err: unknown, apiKey: string | null): Error {
 export class RemoteRerankProvider implements RerankProvider {
   readonly modelId: string;
   private readonly url: string;
+  /** Hosted relevance models answer with a probability in [0,1]. */
+  readonly scoreDomain = 'probability' as const;
 
   constructor(private readonly config: Config) {
     this.url = resolveRerankUrl(config);

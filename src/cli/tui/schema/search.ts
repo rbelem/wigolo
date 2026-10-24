@@ -26,6 +26,10 @@ export const searchCategory: CategoryDef = {
       options: [
         { value: 'onnx', label: 'On-device ONNX' },
         { value: 'remote', label: 'Remote endpoint' },
+        // No `jev` option: it is a legacy alias of `decision` (same endpoint,
+        // same label in rerank-mode.ts), so it would render as a duplicate row.
+        { value: 'workers-ai', label: 'Hosted (Workers AI)' },
+        { value: 'decision', label: 'Jev-compatible judgement model' },
         { value: 'none', label: 'Disabled' },
       ],
       default: 'onnx',
@@ -46,6 +50,17 @@ export const searchCategory: CategoryDef = {
       kind: 'text',
       help: 'Base URL ending in /v1; Wigolo sends POST /rerank',
       visible: (ctx) => (ctx.pending.reranker ?? ctx.current.reranker) === 'remote',
+    },
+    {
+      key: 'WIGOLO_RERANKER_BASE_URL',
+      settingsPath: 'rerankerBaseUrl',
+      label: 'Hosted reranker base URL',
+      kind: 'text',
+      help: 'Endpoint for the workers-ai / decision reranker (remote uses the field above)',
+      visible: (ctx) => {
+        const mode = ctx.pending.reranker ?? ctx.current.reranker;
+        return mode === 'workers-ai' || mode === 'decision' || mode === 'jev';
+      },
     },
     {
       key: 'WIGOLO_EMBEDDING_MODEL',

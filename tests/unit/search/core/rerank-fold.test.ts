@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { foldRerankIntoOrdering } from '../../../../src/search/core/rerank-fold.js';
+import { resetConfig } from '../../../../src/config.js';
 import type { RawSearchResult } from '../../../../src/types.js';
 
 // Honest RawSearchResult — `engine` is required (types.ts). Do NOT use
@@ -552,5 +553,91 @@ describe('foldRerankIntoOrdering', () => {
       queries: ['q'], rerank: fakeRerank({ B: -4, A: +4 }),
     });
     expect(out.map((x) => x.url)).toEqual(['A', 'B']);
+  });
+});
+
+// The all-junk guard compares the batch's best score against the midpoint of the
+// adapter's score DOMAIN. Same numbers, two domains: a hosted reranker returns a
+// probability, so 0.05/0.3 is an all-junk batch and the min-max stretch must not
+// run; the on-device cross-encoder returns logits, where 0.3 is above the
+// midpoint and the stretch is legitimate.
+describe('foldRerankIntoOrdering — all-junk guard is domain-aware', () => {
+  afterEach(() => {
+    delete process.env.WIGOLO_RERANKER;
+    resetConfig();
+  });
+
+  // Three rows so the min-max stretch cannot end in a symmetric tie: composite
+  // ranks A > B > C, while the reranker prefers B.
+  const fixture = () => [r('A', 0.9), r('B', 0.5), r('C', 0.2)];
+  const scores = { A: 0.05, B: 0.3, C: 0.1 };
+
+  it('collapses a hosted all-junk batch to a neutral blend, so composite ordering decides', async () => {
+    process.env.WIGOLO_RERANKER = 'remote';
+    resetConfig();
+    const out = await foldRerankIntoOrdering(fixture(), {
+      queries: ['q'],
+      rerank: fakeRerank(scores),
+    });
+    // Every hosted score is below the 0.5 midpoint, so the batch carries no
+    // ranking information and the composite order survives untouched.
+    expect(out.map((x) => x.url)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('keeps the stretch for on-device logits, where the same numbers are above the midpoint', async () => {
+    process.env.WIGOLO_RERANKER = 'onnx';
+    resetConfig();
+    const out = await foldRerankIntoOrdering(fixture(), {
+      queries: ['q'],
+      rerank: fakeRerank(scores),
+    });
+    // Above the logit floor the stretch is legitimate and B's stronger score
+    // lifts it over the composite leader.
+    expect(out.map((x) => x.url)).toEqual(['B', 'A', 'C']);
+  });
+});
+
+describe('foldRerankIntoOrdering — per-fold time budget', () => {
+  it('stops asking for further query variants once the budget is spent', async () => {
+    const seen: string[] = [];
+    const rerank = async (q: string, cands: { id: string; text: string }[]) => {
+      seen.push(q);
+      const m = new Map<string, number>();
+      for (const c of cands) m.set(c.id, 1);
+      return m;
+    };
+    // A clock seam, not a sleep: each read advances 5s so the budget check is
+    // deterministic instead of racing the wall clock.
+    let ticks = 0;
+    const now = () => (ticks += 5_000);
+    const out = await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.1)], {
+      queries: ['q1', 'q2', 'q3'],
+      rerank,
+      budgetMs: 4_000,
+      now,
+    });
+    // First variant always runs; the rest are dropped rather than stacking a
+    // second timeout on top of the first.
+    expect(seen).toEqual(['q1']);
+    expect(out).toHaveLength(2);
+  });
+
+  it('runs every variant when the budget is ample', async () => {
+    const seen: string[] = [];
+    const rerank = async (q: string, cands: { id: string; text: string }[]) => {
+      seen.push(q);
+      const m = new Map<string, number>();
+      for (const c of cands) m.set(c.id, 1);
+      return m;
+    };
+    let ticks = 0;
+    const now = () => (ticks += 5_000);
+    await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.1)], {
+      queries: ['q1', 'q2', 'q3'],
+      rerank,
+      budgetMs: 60_000,
+      now,
+    });
+    expect(seen).toEqual(['q1', 'q2', 'q3']);
   });
 });

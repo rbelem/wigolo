@@ -26,6 +26,8 @@ After fetching or searching, content is automatically cached with embeddings for
 | `since` | ISO date — only entries cached after this date |
 | `clear` | Delete matching entries (requires a filter) |
 | `stats` | Return total URLs, size, and date range |
+| `compact` | Recompress legacy cached HTML into gzip storage; returns rows and bytes |
+| `vacuum` | With `compact`, rewrite the database file so freed pages leave it |
 | `check_changes` | Re-fetch matching URLs and report what changed |
 | `mode` | `"fts"` (keyword, default) or `"hybrid"` (keyword + semantic) |
 | `limit` | Max results to return (default 20) |

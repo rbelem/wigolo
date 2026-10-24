@@ -48,6 +48,8 @@ The local knowledge store. Every page wigolo fetches, crawls, or searches lands 
 | `since` | string | none | ISO date — only entries cached after this date |
 | `clear` | boolean | false | Delete matching entries (needs query, url_pattern, or since) |
 | `stats` | boolean | false | Return total URLs, size, and date range |
+| `compact` | boolean | false | Recompress legacy plain-text cached HTML into gzip storage; returns `rows_compressed`, `bytes_before`, `bytes_after` |
+| `vacuum` | boolean | false | With `compact`, rewrite the database file afterwards so the freed pages leave it |
 | `check_changes` | boolean | false | Re-fetch matching URLs, report changed/unchanged + diff summary |
 | `mode` | string | "fts" | "fts" (keyword BM25) or "hybrid" (keyword + semantic, fused) |
 | `limit` | number | 20 | Max results to return |

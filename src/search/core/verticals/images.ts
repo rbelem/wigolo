@@ -1,6 +1,7 @@
 import { DdgImageEngine } from '../../engines/ddg-image.js';
 import { BraveImageEngine } from '../../engines/brave-image.js';
 import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 import { getConfig } from '../../../config.js';
 
 // Images vertical for the core backend. Previously `category: 'images'`
@@ -27,6 +28,8 @@ export function getImageEngines(): EngineEntry[] {
   if (getConfig().braveApiKey) {
     entries.push({ engine: wrapWithRetryAndBreaker(new BraveImageEngine()), weight: 1.2, supportsDateFilter: false });
   }
+
+  assertPoolCoversCoreNames('images', entries.map(e => e.engine.name));
 
   cached = entries;
   return cached;

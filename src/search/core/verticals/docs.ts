@@ -3,6 +3,7 @@ import { DevDocsEngine } from '../../engines/devdocs.js';
 import { BingEngine } from '../../engines/bing.js';
 import { DuckDuckGoEngine } from '../../engines/duckduckgo.js';
 import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 
 // MDN + DevDocs are the first-party docs APIs and stay the primary signal. On
 // their own the pool is only two engines — any docs subject they don't index
@@ -20,6 +21,7 @@ export function getDocsEngines(): EngineEntry[] {
     { engine: wrapWithRetryAndBreaker(new BingEngine()), weight: 0.7, supportsDateFilter: false, secondary: true, quality: 'medium' },
     { engine: wrapWithRetryAndBreaker(new DuckDuckGoEngine()), weight: 0.7, supportsDateFilter: false, secondary: true, quality: 'medium' },
   ];
+  assertPoolCoversCoreNames('docs', cached.map(e => e.engine.name));
   return cached;
 }
 

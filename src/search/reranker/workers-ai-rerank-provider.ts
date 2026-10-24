@@ -39,6 +39,8 @@ interface RerankResponse {
 export class WorkersAiRerankProvider implements RerankProvider {
   readonly modelId: string;
   private baseUrl: string;
+  /** Hosted relevance models answer with a probability in [0,1]. */
+  readonly scoreDomain = 'probability' as const;
   private readonly rawBaseUrl: string | null;
   private readonly apiKey: string | null;
   private validated = false;

@@ -47,6 +47,7 @@
     "build:binary": "npm run build && node packaging/binary/bundle.mjs && bash packaging/binary/pack.sh",
     "build:watch": "tsup --watch",
     "dev": "tsx src/index.ts",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",

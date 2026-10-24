@@ -706,3 +706,29 @@ describe('foldRerankIntoOrdering — cooldown after a timeout', () => {
     _resetRerankCooldownForTest();
   });
 });
+
+describe('foldRerankIntoOrdering — scale is taken from the numbers, not the label', () => {
+  it('scores a "probability" batch as logits when the host answers outside [0,1]', async () => {
+    // A self-hosted Cohere-shaped endpoint may return raw logits while the mode
+    // promises probabilities. Trusting the label would clamp every candidate to
+    // 1.0 and flatten the ranking; the fold downgrades instead.
+    const out = await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.5), r('C', 0.2)], {
+      queries: ['q'],
+      rerank: fakeRerank({ A: -5, B: 4, C: 0 }),
+      scoreDomain: 'probability',
+    });
+    expect(out.map((x) => x.url)).toEqual(['B', 'A', 'C']);
+  });
+
+  it('keeps the probability reading when the scores really are in [0,1]', async () => {
+    const out = await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.5), r('C', 0.2)], {
+      queries: ['q'],
+      rerank: fakeRerank({ A: 0.9, B: 0.8, C: 0.7 }),
+      scoreDomain: 'probability',
+    });
+    // All three are above the 0.5 midpoint, so the stretch applies and the
+    // strongest probability wins over the composite leader.
+    expect(out[0].url).toBe('A');
+    expect(out.map((x) => x.url)).toEqual(['A', 'B', 'C']);
+  });
+});

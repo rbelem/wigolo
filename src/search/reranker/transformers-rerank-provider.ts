@@ -53,6 +53,8 @@ export class TransformersRerankProvider implements RerankProvider {
   private model: Model | null = null;
   private loadPromise: Promise<{ tokenizer: Tokenizer; model: Model }> | null = null;
   readonly modelId: string;
+  /** Raw cross-encoder output: centred on 0, unbounded. */
+  readonly scoreDomain = 'logit' as const;
 
   constructor() {
     this.modelId = 'Xenova/ms-marco-MiniLM-L-6-v2';

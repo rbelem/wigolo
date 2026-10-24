@@ -11,6 +11,7 @@ import {
   MARGINALIA_MIN_INTERVAL_MS,
   type EngineEntry,
 } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 import { getConfig } from '../../../config.js';
 
 // Marginalia rate-limits (429) aggressively under a burst. Spacing its calls
@@ -58,6 +59,10 @@ export function getGeneralEngines(): EngineEntry[] {
   if (getConfig().deepseekApiKey) {
     entries.push({ engine: wrapWithRetryAndBreaker(new DeepseekEngine()), weight: 1.1, supportsDateFilter: false, quality: 'medium' });
   }
+
+  // The reserved-name list the plugin loader refuses to shadow must stay a
+  // superset of what this pool actually builds — see core-engine-names.ts.
+  assertPoolCoversCoreNames('general', entries.map(e => e.engine.name));
 
   cached = entries;
   return cached;

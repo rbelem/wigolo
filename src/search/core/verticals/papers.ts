@@ -4,6 +4,7 @@ import { OpenAlexEngine } from '../../engines/openalex.js';
 import { DblpEngine } from '../../engines/dblp.js';
 import { OpenReviewEngine } from '../../engines/openreview.js';
 import { wrapWithRetryAndBreaker, type EngineEntry } from '../engine-base.js';
+import { assertPoolCoversCoreNames } from '../core-engine-names.js';
 
 // arXiv + Semantic Scholar are the canonical primary sources. OpenAlex, DBLP,
 // and OpenReview broaden coverage (open metadata, CS conference bibliography,
@@ -26,6 +27,7 @@ export function getPapersEngines(): EngineEntry[] {
     { engine: wrapWithRetryAndBreaker(new DblpEngine()), weight: 0.7, supportsDateFilter: false, secondary: true, quality: 'low' },
     { engine: wrapWithRetryAndBreaker(new OpenReviewEngine()), weight: 0.6, supportsDateFilter: false, secondary: true, quality: 'medium' },
   ];
+  assertPoolCoversCoreNames('papers', cached.map(e => e.engine.name));
   return cached;
 }
 

@@ -13,8 +13,9 @@ no plugin needed. The example stays because it is the shortest non-trivial
 plugin in the tree (HTTP call, timeout, error mapping, result translation).
 
 It registers under the name **`deepseek-tools`**, not `deepseek`: two engines
-under one name make results indistinguishable, and the plugin loader drops a
-plugin whose engine name is already registered.
+under one name make results indistinguishable, and the loader's duplicate check
+covers only plugin-registered names — a collision with a CORE engine loads
+silently rather than being dropped.
 
 `wigolo plugin add` accepts a git URL only, so from the repository root link
 this directory into your plugins dir and validate it:

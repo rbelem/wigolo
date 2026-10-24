@@ -43,7 +43,7 @@ vi.mock('../../../src/cli/warmup.js', () => ({
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { runDoctor } from '../../../src/cli/doctor.js';
+import { runDoctor, postDaemonBreakerReset } from '../../../src/cli/doctor.js';
 import { getBreakerSnapshot, resetBreakers } from '../../../src/search/core/engine-base.js';
 
 function okProc(stdout = ''): ReturnType<typeof spawnSync> {
@@ -358,6 +358,49 @@ describe('doctor — SearXNG process state is not a hard failure', () => {
 
     expect(code).toBe(0);
     expect(outBuffer).toMatch(/Overall: OK/);
+  });
+});
+
+describe('doctor --fix daemon reset guard', () => {
+  // The admin route carries a bearer token and `daemonHost` is user-settable,
+  // so a non-loopback host must get no request at all.
+  afterEach(() => {
+    delete process.env.WIGOLO_DAEMON_HOST;
+    resetConfig();
+    vi.unstubAllGlobals();
+    vi.mocked(readFileSync).mockReset();
+  });
+
+  it('refuses a non-loopback http daemon host without sending a request', async () => {
+    process.env.WIGOLO_DAEMON_HOST = '192.0.2.10';
+    resetConfig();
+    vi.mocked(readFileSync).mockReturnValue('token-from-disk');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await postDaemonBreakerReset('/tmp/.wigolo');
+
+    expect(result.ok).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.error).toMatch(/not loopback/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('still POSTs to a loopback daemon with the on-disk token', async () => {
+    process.env.WIGOLO_DAEMON_HOST = '127.0.0.1';
+    resetConfig();
+    vi.mocked(readFileSync).mockReturnValue('token-from-disk');
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await postDaemonBreakerReset('/tmp/.wigolo');
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://127.0.0.1:3333/admin/reset-breakers');
+    expect(init.method).toBe('POST');
+    expect(init.headers.Authorization).toBe('Bearer token-from-disk');
   });
 });
 

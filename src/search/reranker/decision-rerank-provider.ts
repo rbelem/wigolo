@@ -285,8 +285,9 @@ function toScore(answer: unknown): number | null {
  *
  * Only a NON-INTEGER value can be a probability, and only in [0,1]. A vendor
  * that means a probability should send it in `probability` (see toScore);
- * a vendor answering on a 0-100 scale still fails loudly here rather than
- * flattening every candidate to 1.0.
+ * a vendor answering on a 0-100 scale still fails here rather than flattening
+ * every candidate to 1.0 — `interpret` skips that answer, and throws only if no
+ * answer in the batch parses.
  */
 function numericScore(n: number): number {
   if (!Number.isInteger(n)) {
@@ -294,7 +295,8 @@ function numericScore(n: number): number {
     throw new Error(
       `decision rerank returned a non-integral score outside [0,1] (${n}); ` +
         `a bucket index must be a whole number in [0,${RELEVANCE_BUCKETS.length - 1}] ` +
-        'and a probability must be in [0,1]',
+        'and a probability must be in [0,1] — a 0-100 percentage must be normalised ' +
+        'to [0,1] before it is sent',
     );
   }
   if (n >= 0 && n < RELEVANCE_BUCKETS.length) {
@@ -302,11 +304,21 @@ function numericScore(n: number): number {
   }
   throw new Error(
     `decision rerank returned an out-of-range score (${n}); expected a bucket index ` +
-      `in [0,${RELEVANCE_BUCKETS.length - 1}] or a probability in [0,1]`,
+      `in [0,${RELEVANCE_BUCKETS.length - 1}] or a probability in [0,1] — a 0-100 ` +
+      'percentage must be normalised to [0,1] before it is sent',
   );
 }
 
-/** Collect an option→probability map from the encodings vendors use. */
+/**
+ * Collect an option→probability map from the encodings vendors use.
+ *
+ * Values are kept RAW (unclamped): vendors send the same distribution either as
+ * probabilities in [0,1] or as percentages in [0,100], and clamping here
+ * saturated every percentage answer to 1.0 — a 70/30 split then scored the same
+ * as a coin flip. `expectedBucket` divides by the total mass, which makes both
+ * scales agree, and it validates the range so a logit or a negative cannot be
+ * normalised into a plausible-looking ordering.
+ */
 function optionDistribution(rec: Record<string, unknown>): Map<string, number> | null {
   for (const key of ['scores', 'probabilities', 'options', 'choices']) {
     const raw = rec[key];
@@ -314,7 +326,7 @@ function optionDistribution(rec: Record<string, unknown>): Map<string, number> |
     if (asMap) {
       const out = new Map<string, number>();
       for (const [k, v] of Object.entries(asMap)) {
-        if (typeof v === 'number') out.set(k, clamp01(v));
+        if (typeof v === 'number') out.set(k, v);
       }
       if (out.size > 0) return out;
     }
@@ -325,7 +337,7 @@ function optionDistribution(rec: Record<string, unknown>): Map<string, number> |
         if (!r) continue;
         const opt = r.option ?? r.label ?? r.value ?? r.choice;
         const p = r.probability ?? r.score ?? r.confidence;
-        if (typeof opt === 'string' && typeof p === 'number') out.set(opt, clamp01(p));
+        if (typeof opt === 'string' && typeof p === 'number') out.set(opt, p);
       }
       if (out.size > 0) return out;
     }
@@ -333,8 +345,29 @@ function optionDistribution(rec: Record<string, unknown>): Map<string, number> |
   return null;
 }
 
-/** Expected bucket index normalised into [0, 1]. */
+/**
+ * Expected bucket index normalised into [0, 1].
+ *
+ * `dist` holds the vendor's raw numbers, which are a DISTRIBUTION on one of two
+ * scales: probabilities in [0,1] or percentages in [0,100]. Dividing by the mass
+ * on recognised options makes both scales land on the same [0,1] answer, so no
+ * scale has to be guessed — 70/30 over {Irrelevant, Highly relevant} scores 0.3,
+ * exactly as 0.7/0.3 does.
+ *
+ * Anything that is not a distribution (a logit, a negative, a count > 100) is
+ * rejected naming the observed range rather than normalised into a
+ * plausible-looking ordering that silently reorders every result.
+ */
 function expectedBucket(dist: Map<string, number>): number {
+  const values = [...dist.values()];
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  if (!values.every((v) => Number.isFinite(v)) || lo < 0 || hi > 100) {
+    throw new Error(
+      `decision rerank returned a distribution whose values are not probabilities ` +
+        `(observed range ${lo}..${hi}); expected probabilities in [0,1] or percentages in [0,100]`,
+    );
+  }
   let weight = 0;
   let acc = 0;
   for (const [option, prob] of dist) {
@@ -350,27 +383,65 @@ function expectedBucket(dist: Map<string, number>): number {
 }
 
 function bucketIndex(label: string): number {
-  const needle = label.trim().toLowerCase();
-  return RELEVANCE_BUCKETS.findIndex((b) => b.toLowerCase().startsWith(needle.split(':')[0].trim()));
+  // An empty (or whitespace) label matches nothing. `findIndex` on
+  // `startsWith('')` is true for the first bucket, so a blank label scored a
+  // confident "Irrelevant" (0.0) — the opposite of the neutral 0.5 toScore()
+  // promises for a label it cannot recognise.
+  const needle = label.trim().toLowerCase().split(':')[0].trim();
+  if (!needle) return -1;
+  return RELEVANCE_BUCKETS.findIndex((b) => b.toLowerCase().startsWith(needle));
 }
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+/**
+ * Map the per-question answers onto candidate ids.
+ *
+ * Tolerates a bad answer the way the Workers-AI adapter tolerates a bad row
+ * (see `workers-ai-rerank-provider.ts`): an answer that cannot be parsed is
+ * skipped and counted, because one malformed answer used to throw and void an
+ * otherwise good batch — losing the ranking of every other candidate. Only a
+ * batch with NOTHING usable throws, so a wholesale shape mismatch still fails
+ * loudly.
+ */
 function interpret(payload: unknown, indexToId: Map<number, string>): RerankResult[] {
   const answers = findAnswers(payload);
   if (!answers) return [];
 
   const out: RerankResult[] = [];
+  let skipped = 0;
+  let firstError: string | null = null;
   for (const [key, answer] of Object.entries(answers)) {
     const m = /^r(\d+)$/.exec(key);
     if (!m) continue;
     const id = indexToId.get(Number(m[1]));
     if (id === undefined) continue;
-    const score = toScore(answer);
-    if (score === null) continue;
+    let score: number | null;
+    try {
+      score = toScore(answer);
+    } catch (err) {
+      skipped++;
+      firstError ??= err instanceof Error ? err.message : String(err);
+      continue;
+    }
+    if (score === null) {
+      skipped++;
+      continue;
+    }
     out.push({ id, score });
+  }
+
+  if (skipped > 0) {
+    log.debug('decision rerank skipped unparseable answers', {
+      skipped,
+      kept: out.length,
+      firstError,
+    });
+  }
+  if (out.length === 0 && firstError) {
+    throw new Error(`decision rerank: every answer failed to parse — ${firstError}`);
   }
   return out;
 }

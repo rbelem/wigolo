@@ -101,6 +101,23 @@ describe('DecisionRerankProvider', () => {
     }
   });
 
+  it('scores an empty or unrecognised label as neutral, not as Irrelevant', async () => {
+    // bucketIndex('') used to match bucket 0 — every string starts with '' — so a
+    // blank label scored a confident 0.0 (Irrelevant), the exact opposite of the
+    // neutral 0.5 toScore() promises for a label it cannot recognise. A model
+    // that returns '' for an unanswered question must not sink that candidate.
+    reply = {
+      answers: {
+        r0: { label: '' },
+        r1: { label: '   ' },
+        r2: { label: 'nonsense' },
+      },
+    };
+    const out = await new DecisionRerankProvider().rerank('q', candidates);
+    expect(out).toHaveLength(3);
+    for (const r of out) expect(r.score).toBe(0.5);
+  });
+
   it('lets the confidence on a chosen label move the score', async () => {
     // The (label, probability) encoding must not discard the probability: a
     // model that says "Highly relevant, but only 1% likely" is not scoring the
@@ -142,6 +159,39 @@ describe('DecisionRerankProvider', () => {
     expect(out.map((r) => r.id)).toEqual(['high', 'low']);
     expect(out[0].score).toBeGreaterThan(0.6);
     expect(out[1].score).toBeLessThan(0.4);
+  });
+
+  it('normalises a percentage distribution by its own total', async () => {
+    // Vendors differ on the scale: the same answer arrives as probabilities
+    // (0..1) or as percentages (0..100). Clamping every value to [0,1] at parse
+    // time turned {70, 30} into {1, 1}, so a lopsided split scored 0.5 — exactly
+    // the ordering reranking exists to produce. Dividing by the total makes both
+    // scales agree. This pins the "normalise by its own total" choice.
+    reply = {
+      answers: {
+        r0: { scores: { Irrelevant: 70, 'Highly relevant': 30 } },
+        r1: { scores: { Irrelevant: 20, 'Highly relevant': 80 } },
+      },
+    };
+    const out = await new DecisionRerankProvider().rerank('q', [
+      { id: 'low', text: 'x' },
+      { id: 'high', text: 'y' },
+    ]);
+    const byId = Object.fromEntries(out.map((r) => [r.id, r.score]));
+
+    expect(out.map((r) => r.id)).toEqual(['high', 'low']);
+    expect(byId.high).toBeCloseTo(0.8, 10);
+    expect(byId.low).toBeCloseTo(0.3, 10);
+  });
+
+  it('rejects a distribution that is on no probability scale, naming the range', async () => {
+    // A negative (or a value above 100 — a logit, a count) is not a distribution.
+    // Normalising it by its total would manufacture a confident-looking ordering
+    // out of nonsense, so it is rejected with the observed range instead.
+    reply = { answers: { r0: { scores: { Irrelevant: -5, 'Highly relevant': 1 } } } };
+    await expect(
+      new DecisionRerankProvider().rerank('q', [{ id: 'a', text: 'x' }]),
+    ).rejects.toThrow(/observed range -5\.\.1/);
   });
 
   it('scores a probability-per-option LIST the same way', async () => {
@@ -228,6 +278,32 @@ describe('DecisionRerankProvider', () => {
     reply = { results: { r0: { value: 'Highly relevant', probability: 0.5 } } };
     const out = await new DecisionRerankProvider().rerank('q', candidates);
     expect(out[0].id).toBe('alpha');
+  });
+
+  it('keeps the good answers when one answer is malformed', async () => {
+    // One unusable answer used to throw and void the whole batch, so a single odd
+    // value from the model lost the ranking of every other candidate. Mirrors the
+    // Workers-AI adapter: skip the unusable row, and only a batch with nothing
+    // usable fails.
+    reply = {
+      answers: {
+        r0: { label: 'Highly relevant', probability: 0.9 },
+        r1: { score: 42 }, // out of range for a bucket index AND for a probability
+        r2: { label: 'Irrelevant' },
+      },
+    };
+    const out = await new DecisionRerankProvider().rerank('q', candidates);
+
+    expect(out.map((r) => r.id)).toEqual(['alpha', 'gamma']);
+    expect(out).toHaveLength(2);
+    expect(out[0].score).toBeGreaterThan(out[1].score);
+  });
+
+  it('throws when NO answer is usable, surfacing the parse failure', async () => {
+    reply = { answers: { r0: { score: 42 }, r1: { score: 70 } } };
+    await expect(
+      new DecisionRerankProvider().rerank('q', [{ id: 'a', text: 'x' }, { id: 'b', text: 'y' }]),
+    ).rejects.toThrow(/every answer failed to parse/);
   });
 
   it('throws with observed keys rather than silently scoring zero', async () => {

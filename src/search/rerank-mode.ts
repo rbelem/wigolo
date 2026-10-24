@@ -17,7 +17,18 @@ import { getConfig } from '../config.js';
 /** Modes backed by a component that returns relevance scores. */
 const SCORING_MODES = new Set(['onnx', 'remote', 'workers-ai', 'decision', 'jev']);
 
+/** Modes served by a hosted endpoint — nothing to download, nothing to warm. */
+const HOSTED_MODES = new Set(['remote', 'workers-ai', 'decision', 'jev']);
+
 /** True when reranking should run (local ONNX or any hosted judgement model). */
 export function rerankerActive(): boolean {
   return SCORING_MODES.has(getConfig().reranker);
+}
+
+/**
+ * True when the mode talks to a hosted endpoint, so `warmup`/`doctor` must not
+ * treat it as a missing on-device model and try to download one.
+ */
+export function rerankerIsHosted(mode: string): boolean {
+  return HOSTED_MODES.has(mode);
 }

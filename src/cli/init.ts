@@ -184,7 +184,7 @@ async function reportSetupAndDoctor(
     if (status === 'ready') {
       print(`  ✓ ${label[key]}: ready`);
     } else if (status === 'skipped') {
-      const detail = key === 'reranker' && (getConfig().reranker === 'none' || getConfig().reranker === 'custom')
+      const detail = key === 'reranker' && getConfig().reranker === 'none'
         ? 'disabled' : 'lazy — downloads on first use';
       print(`  ○ ${label[key]}: skipped (${detail})`);
     } else {

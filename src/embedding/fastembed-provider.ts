@@ -72,6 +72,20 @@ export async function initModelWithArchiveRetry<T>(
 export const FASTEMBED_EMBED_MODEL_ID = 'BGE-small-en-v1.5';
 
 /**
+ * Number of provider instances holding a loaded ONNX session in this process.
+ * The factory keeps at most one, but the count is honest under tests that
+ * construct several. Read by the daemon health probe: "is the ~300 MB
+ * embedding session actually resident right now", which an idle eviction
+ * flips back to false.
+ */
+let residentSessions = 0;
+
+/** True while any FastembedEmbedProvider in this process holds a live model. */
+export function isEmbedModelResident(): boolean {
+  return residentSessions > 0;
+}
+
+/**
  * Native ONNX embedding provider using fastembed-rs Node bindings.
  *
  * Model: BGE-small-en-v1.5 (384-dim). First call to `warmup()` downloads
@@ -139,6 +153,7 @@ export class FastembedEmbedProvider implements EmbedProvider {
     this.loadGeneration += 1;
     const model = this.model;
     this.model = null;
+    if (model) residentSessions = Math.max(0, residentSessions - 1);
     this.modelPromise = null;
     this.modelPromiseGeneration = -1;
     if (this.embedsInFlight > 0) await this.drain();
@@ -174,6 +189,7 @@ export class FastembedEmbedProvider implements EmbedProvider {
         return m;
       }
       this.model = m;
+      residentSessions += 1;
       log.info('Embedding model ready', { modelId: this.modelId, dim: this.dim });
       return m;
     }).catch(err => {

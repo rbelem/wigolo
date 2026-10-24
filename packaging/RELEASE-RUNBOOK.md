@@ -16,13 +16,23 @@ and the Docker build both point at the published artifact).
 
 ## 0.5. Skill-pack hash ledger (pre-publish, only when `skills/` changed)
 
-- If this release changes ANY file under `skills/`, append the OUTGOING (previous
-  release's) hashes to `assets/legacy-skill-hashes.json` before bumping:
-  `node scripts/gen-legacy-skill-hashes.mjs` regenerates the union from git
-  history — verify the previous release tag's bytes are included. Without this,
-  `wigolo skills remove` / `wigolo uninstall` refuses to clean receipt-less
-  installs of the previous version (the safe-remove fallback matches known
+- If this release changes ANY file under `skills/`, regenerate the ledger before
+  bumping: `node scripts/gen-legacy-skill-hashes.mjs`. It is a UNION — it seeds
+  from the committed manifest, scans BOTH historical roots (`assets/skills/**`
+  and `skills/**`) at every relevant commit and every release tag, and walks the
+  working tree — so it can only add hashes, never drop them.
+- Verify, do not assume: the run must report no shrink, and the previous release
+  tag's `skills/**` bytes must be in the output. Check both explicitly:
+  `git diff --stat assets/legacy-skill-hashes.json` (additions only) and a
+  per-file comparison against `<last-published-tag>`'s tree. A shallow clone or a
+  rewritten history reproduces only a subset of the historical bytes — if the
+  seeded count is lower than the manifest's current total, STOP; fix the clone
+  (fetch the tags/history) rather than committing a smaller ledger. Without the
+  previous release's hashes, `wigolo skills remove` / `wigolo uninstall` refuses
+  to clean receipt-less installs (the safe-remove fallback matches known
   canonical bytes only).
+- Also check the gate condition itself:
+  `git diff --quiet <last-published-tag> HEAD -- skills assets/skills || echo "skills changed: ledger required"`.
 - Binary channel note: `packaging/binary/pkg.config.json` globs `skills/**/*` —
   pkg globs that match nothing WARN instead of failing, so binary re-validation
   (`scripts/verify-channel-binary.sh`) must include a skills-touching smoke

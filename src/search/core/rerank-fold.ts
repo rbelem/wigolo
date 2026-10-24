@@ -1,6 +1,7 @@
 import type { RawSearchResult, EvidenceScore } from '../../types.js';
 import { getConfig } from '../../config.js';
 import { rerankerModeSpec } from '../rerank-mode.js';
+import { recordRerankTimeout, rerankCoolingDown } from '../rerank-cooldown.js';
 import { getRerankProvider } from '../../providers/rerank-provider.js';
 import { detectRareTerms, isRareTermMiss } from './rare-terms.js';
 import { lexicalAlignment } from './lexical-alignment.js';
@@ -129,6 +130,12 @@ export async function foldRerankIntoOrdering(
   opts: FoldOptions,
 ): Promise<RawSearchResult[]> {
   if (results.length <= 1) return results;
+  // A recent timeout means this fold would spend its whole budget re-discovering
+  // that the endpoint is down; composite ordering is where it would end up anyway.
+  if (rerankCoolingDown()) {
+    log.debug('rerank cooling down after a timeout, keeping composite ordering');
+    return results;
+  }
   const queries = opts.queries.filter((q) => typeof q === 'string' && q.trim().length > 0);
   if (queries.length === 0) return results;
 
@@ -149,7 +156,18 @@ export async function foldRerankIntoOrdering(
 
   // max logit per candidate across all queries -> preserves multi-query hedge.
   const logits = new Array<number>(windowResults.length).fill(-Infinity);
-  const budgetMs = opts.budgetMs ?? RERANK_FOLD_BUDGET_MS;
+  const budgetMs = opts.budgetMs ?? getConfig().rerankerFoldBudgetMs ?? RERANK_FOLD_BUDGET_MS;
+  // Warm the provider BEFORE the clock starts. For the on-device model the first
+  // call includes a download (fresh install) or a session reload after idle
+  // eviction, and charging that to the rerank budget silently dropped every
+  // later query variant on the very queries the README recommends.
+  if (!opts.rerank) {
+    try {
+      await getRerankProvider();
+    } catch {
+      // Leave the reporting to the first real call, which knows the mode.
+    }
+  }
   const now = opts.now ?? Date.now;
   const startedAt = now();
   for (let qi = 0; qi < queries.length; qi++) {
@@ -170,6 +188,7 @@ export async function foldRerankIntoOrdering(
     try {
       const scoreMap = await raceBudget(rerankFn(queries[qi], candidates), remainingMs);
       if (scoreMap === BUDGET_EXCEEDED) {
+        recordRerankTimeout();
         log.debug('rerank-fold variant exceeded the budget, keeping earlier scores', {
           variant: qi + 1,
           variants: queries.length,

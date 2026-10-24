@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { foldRerankIntoOrdering } from '../../../../src/search/core/rerank-fold.js';
 import { resetConfig } from '../../../../src/config.js';
+import { _resetRerankCooldownForTest } from '../../../../src/search/rerank-cooldown.js';
 import type { RawSearchResult } from '../../../../src/types.js';
+
+// The cooldown is process-wide state; a test that trips it must not affect the next.
+afterEach(() => {
+  _resetRerankCooldownForTest();
+});
 
 // Honest RawSearchResult — `engine` is required (types.ts). Do NOT use
 // `as RawSearchResult`; tsc excludes tests/ and vitest strips types, so a
@@ -666,5 +672,37 @@ describe('foldRerankIntoOrdering — per-fold time budget', () => {
       now,
     });
     expect(seen).toEqual(['q1', 'q2', 'q3']);
+  });
+});
+
+describe('foldRerankIntoOrdering — cooldown after a timeout', () => {
+  it('skips reranking entirely while the reranker is cooling down', async () => {
+    // The previous test in this file leaves a recorded timeout behind; this one
+    // asserts the consequence: no request at all, straight to composite order.
+    const seen: string[] = [];
+    const rerank = async (q: string, cands: { id: string; text: string }[]) => {
+      seen.push(q);
+      const m = new Map<string, number>();
+      for (const c of cands) m.set(c.id, 1);
+      return m;
+    };
+    // A hung variant sets the cooldown for real.
+    await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.5), r('C', 0.2)], {
+      queries: ['q1', 'q2'],
+      rerank: async (q, cands) => {
+        if (q === 'q2') return new Promise<Map<string, number>>(() => {});
+        const m = new Map<string, number>();
+        for (const c of cands) m.set(c.id, 1);
+        return m;
+      },
+      budgetMs: 30,
+    });
+    const out = await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.5), r('C', 0.2)], {
+      queries: ['q1'],
+      rerank,
+    });
+    expect(seen).toEqual([]);
+    expect(out.map((x) => x.url)).toEqual(['A', 'B', 'C']);
+    _resetRerankCooldownForTest();
   });
 });

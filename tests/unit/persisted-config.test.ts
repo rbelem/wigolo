@@ -158,18 +158,22 @@ describe('writePersistedConfig', () => {
     },
   );
 
-  it('strips denylisted secret settings keys (braveApiKey / githubToken)', () => {
+  it('strips denylisted secret settings keys (braveApiKey / githubToken / deepseekApiKey / embeddingApiKey)', () => {
     const path = join(dir, 'config.json');
     writePersistedConfig(path, {
       settings: {
         defaultBrowser: 'chromium',
         braveApiKey: 'brave-secret',
+        deepseekApiKey: 'deepseek-secret',
         githubToken: 'ghp_secret',
+        embeddingApiKey: 'embed-secret',
       },
     });
     const raw = JSON.parse(readFileSync(path, 'utf-8'));
     expect(raw.settings.braveApiKey).toBeUndefined();
+    expect(raw.settings.deepseekApiKey).toBeUndefined();
     expect(raw.settings.githubToken).toBeUndefined();
+    expect(raw.settings.embeddingApiKey).toBeUndefined();
     // Non-secret key survives.
     expect(raw.settings.defaultBrowser).toBe('chromium');
   });

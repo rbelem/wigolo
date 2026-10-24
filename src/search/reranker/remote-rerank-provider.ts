@@ -1,6 +1,7 @@
 import type { Config } from '../../config.js';
 import type { RerankCandidate, RerankProvider, RerankResult } from '../../providers/rerank-provider.js';
 import { resolveRemoteBase } from '../../providers/remote-endpoint.js';
+import { postJsonCapped } from '../../providers/hosted-http.js';
 
 type RemoteResult = { index?: unknown; relevance_score?: unknown; score?: unknown };
 
@@ -18,6 +19,17 @@ function missingBaseMessage(config: Config): string {
     'adapter: set WIGOLO_RERANKER=workers-ai to keep it, or point ' +
     'WIGOLO_RERANK_API_BASE at a Cohere /rerank service.'
   );
+}
+
+/** Map a shared-client failure onto this provider's established error surface. */
+function rerankError(err: unknown, apiKey: string | null): Error {
+  const status = (err as { status?: number }).status;
+  // The shared client puts the status on the error; keep reporting it verbatim
+  // (and keep its bounded body excerpt out of the message).
+  if (typeof status === 'number') return new Error(`Remote rerank HTTP ${status}`);
+  const reason = (err instanceof Error ? err.message : 'unknown network error')
+    .replaceAll(apiKey || '\0', '[redacted]');
+  return new Error(`Remote rerank request failed: ${reason}`);
 }
 
 /** Cohere-style POST /rerank adapter for a configured model service. */
@@ -42,33 +54,21 @@ export class RemoteRerankProvider implements RerankProvider {
     if (!Number.isInteger(topK) || topK < 0) throw new Error('Remote rerank topK must be a non-negative integer');
     if (topK === 0) return [];
     const topN = Math.min(topK, candidates.length);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.config.rerankApiKey) headers.Authorization = `Bearer ${this.config.rerankApiKey}`;
 
-    let response: Response;
-    try {
-      response = await fetch(this.url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ model: this.modelId, query, documents: candidates.map((c) => c.text), top_n: topN }),
-        signal: AbortSignal.timeout(this.config.rerankerRequestTimeoutMs),
-        redirect: 'error',
-      });
-    } catch (err) {
-      const reason = (err instanceof Error ? err.message : 'unknown network error')
-        .replaceAll(this.config.rerankApiKey || '\0', '[redacted]');
-      throw new Error(`Remote rerank request failed: ${reason}`);
-    }
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error(`Remote rerank HTTP ${response.status}`);
-    }
-
+    // Shared transport: bounded response size, shared transient-failure
+    // classification, and `redirect: 'error'` (resolveRemoteBase has already
+    // vetted the URL). A hostile host can no longer buffer forever.
     let payload: unknown;
     try {
-      payload = await response.json();
-    } catch {
-      throw new Error('Remote rerank returned invalid JSON');
+      payload = await postJsonCapped<unknown>({
+        url: this.url,
+        body: { model: this.modelId, query, documents: candidates.map((c) => c.text), top_n: topN },
+        apiKey: this.config.rerankApiKey,
+        timeoutMs: this.config.rerankerRequestTimeoutMs,
+        label: 'Remote rerank',
+      });
+    } catch (err) {
+      throw rerankError(err, this.config.rerankApiKey);
     }
     if (!payload || typeof payload !== 'object' || !('results' in payload) || !Array.isArray(payload.results)) {
       throw new Error('Remote rerank response must contain a results array');

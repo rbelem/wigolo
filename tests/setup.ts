@@ -3,6 +3,88 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// Strip ambient configuration that changes what the suite measures.
+//
+// CI is accidentally hermetic: its environment holds no provider keys and no
+// WIGOLO_* selectors, so tests that assert "no provider configured" or "default
+// backend" pass there and fail on a developer box that exports real ones. Two
+// observed failures, both from exactly this: a real GEMINI_API_KEY made
+// key-store's precedence assertions compare against the ambient key, and an
+// exported BRAVE_API_KEY added an engine to the search pool that no test route
+// mocks, which tripped the degraded-pool lexical gate and emptied the results.
+//
+// Deleting here — at module load, before any test file is imported — makes the
+// suite depend on the code rather than on the operator's shell. A test that
+// needs a key or a non-default mode sets it itself, which is also how it stays
+// readable. Proxies are deliberately NOT stripped: a sandboxed runner may need
+// them to reach its fixtures.
+const AMBIENT_CONFIG_VARS = [
+  // LLM providers
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
+  'GROQ_API_KEY',
+  'MISTRAL_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'XAI_API_KEY',
+  'ZAI_API_KEY',
+  'ZHIPU_API_KEY',
+  'MOONSHOT_API_KEY',
+  'KIMI_API_KEY',
+  'ALIBABA_TOKEN_PLAN_API_KEY',
+  'ALIBABA_CODING_PLAN_API_KEY',
+  'OPENCODE_API_KEY',
+  'OPENCODE_GO_API_KEY',
+  'LLM_API_KEY',
+  'TEXT_MODEL_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_MODEL',
+  'WIGOLO_LLM_API_KEY',
+  'WIGOLO_LLM_PROVIDER',
+  'WIGOLO_LLM_MODEL',
+  // inference backends and their endpoints
+  'WIGOLO_RERANKER',
+  'WIGOLO_RERANKER_MODEL',
+  'WIGOLO_RERANKER_BASE_URL',
+  'WIGOLO_RERANKER_API_KEY',
+  'WIGOLO_RERANK_API_BASE',
+  'WIGOLO_RERANK_API_KEY',
+  'WIGOLO_RELEVANCE_THRESHOLD',
+  'WIGOLO_EMBEDDING_PROVIDER',
+  'WIGOLO_EMBEDDING_MODEL',
+  'WIGOLO_EMBEDDING_BASE_URL',
+  'WIGOLO_EMBEDDING_API_KEY',
+  'WIGOLO_EMBEDDING_DIM',
+  // key-gated engines and backend selection
+  'BRAVE_API_KEY',
+  'EXA_API_KEY',
+  'FIRECRAWL_API_KEY',
+  'WIGOLO_GITHUB_TOKEN',
+  'WIGOLO_SEARCH',
+  'WIGOLO_SEARXNG_URL',
+  'SEARXNG_URL',
+  'WIGOLO_WARM_ENGINES',
+  'WIGOLO_EAGER_WARMUP',
+  'WIGOLO_API_TOKEN',
+  // browser selection: a developer's installed Chrome would replace the mock
+  'WIGOLO_BROWSER_CHANNEL',
+  'WIGOLO_CHROME_PATH',
+  'WIGOLO_CDP_URL',
+  // data/config paths: never point the suite at a developer's real profile
+  'WIGOLO_DATA_DIR',
+  'WIGOLO_CONFIG_PATH',
+] as const;
+
+for (const key of AMBIENT_CONFIG_VARS) delete process.env[key];
+
+// The OS keychain is the other half of "the developer's real configuration".
+// `resolveKeychainSecret` reaches libsecret/Keychain when an env var is absent,
+// so a stored key would answer where CI answers `undefined` — and a test that
+// asserts "not configured" would pass or fail by desktop state. Install an
+// inert adapter; a test that exercises the keychain path injects its own with
+// `_setCredentialKeychainForTests`.
+
 // Isolate the data dir so the suite NEVER writes to a developer's real
 // ~/.wigolo (a vitest worker otherwise opens the live wigolo.db). One dir per
 // worker process, reused across the files that worker runs. The path contains

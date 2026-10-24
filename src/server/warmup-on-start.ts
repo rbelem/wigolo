@@ -1,6 +1,7 @@
 import { createLogger } from '../logger.js';
 import { getEmbeddingService } from '../embedding/embed.js';
 import { getConfig } from '../config.js';
+import { rerankerModeSpec } from '../search/rerank-mode.js';
 
 const log = createLogger('server');
 
@@ -98,7 +99,10 @@ async function warmEmbed(): Promise<void> {
 }
 
 async function warmRerank(): Promise<void> {
-  if (getConfig().reranker !== 'onnx') return;
+  // Only the on-device mode has a model to load; a hosted mode warms nothing
+  // locally and `none` has no provider at all.
+  const spec = rerankerModeSpec(getConfig().reranker);
+  if (!spec?.scores || spec.hosted) return;
   const start = Date.now();
   try {
     const mod = await import('../providers/rerank-provider.js');

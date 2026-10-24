@@ -233,4 +233,28 @@ describe('probeHealth — inference reporting', () => {
     resetConfig();
     expect(probeHealth(makeInput({ browserPool: {} as any })).inference.reranker).toBe('none');
   });
+
+  it('reports remote as remote, not collapsed into decision', () => {
+    // WHY: every hosted mode used to report as 'decision', so an operator
+    // debugging a Cohere-shape endpoint was sent to the wrong backend.
+    process.env.WIGOLO_RERANKER = 'remote';
+    process.env.WIGOLO_RERANK_API_BASE = 'https://example.test/v1';
+    resetConfig();
+    expect(probeHealth(makeInput({ browserPool: {} as any })).inference.reranker).toBe('remote');
+  });
+
+  it('reports workers-ai as workers-ai, not as the local onnx profile', () => {
+    process.env.WIGOLO_RERANKER = 'workers-ai';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://example.test/ai/run/bge-reranker-base';
+    resetConfig();
+    expect(probeHealth(makeInput({ browserPool: {} as any })).inference.reranker).toBe('workers-ai');
+  });
+
+  it('reports the legacy jev alias as decision', () => {
+    // `jev` selects the decision backend; the union must not grow an alias.
+    process.env.WIGOLO_RERANKER = 'jev';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://example.test/systemone';
+    resetConfig();
+    expect(probeHealth(makeInput({ browserPool: {} as any })).inference.reranker).toBe('decision');
+  });
 });

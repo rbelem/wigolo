@@ -74,7 +74,7 @@ describe('probeSetupStatus', () => {
     searchBackend: () => 'core' as const,
     searxngReady: () => false,
     embeddingsInstalled: () => true,
-    rerankerInstalled: () => true,
+    rerankerState: () => 'ok' as const,
     llmKeyPresent: () => false,
     configuredAgents: () => ['claude-code'],
   };
@@ -189,6 +189,27 @@ describe('probeSetupStatus', () => {
     expect(embLine).not.toContain('find_similar disabled');
   });
 
+  it('reranker: none → ○ skipped with "disabled in config", not degraded', async () => {
+    // `none` is a deliberate choice. The dashboard used to render it (and every
+    // hosted mode) as "degraded — relevance reranking off".
+    const comps = await probeSetupStatus({ ...deps, rerankerState: () => 'disabled' as const });
+    const r = comps.find(c => c.id === 'reranker')!;
+    expect(r.status).toBe('skipped');
+    expect(r.detail).toBe('disabled in config');
+    const summary = summarizeSetup(comps);
+    const line = summary.lines.find(l => l.includes('ML reranker'))!;
+    expect(line).toContain('○');
+    expect(line).not.toContain('⚠');
+    expect(line).not.toContain('relevance reranking off');
+  });
+
+  it('a scoring reranker with no model still degrades, keeping the old detail', async () => {
+    const comps = await probeSetupStatus({ ...deps, rerankerState: () => 'degraded' as const });
+    const r = comps.find(c => c.id === 'reranker')!;
+    expect(r.status).toBe('degraded');
+    expect(r.detail).toBe('relevance reranking off');
+  });
+
   // Genuinely fresh machine: no browser, no embeddings, engine-only install.
   // Every lazily-acquired component self-installs on first use, so a bare
   // `wigolo init --non-interactive` must succeed — exit 0, both rows ○ lazy.
@@ -266,7 +287,7 @@ describe('defaultProbeDeps', () => {
       'searchBackend',
       'searxngReady',
       'embeddingsInstalled',
-      'rerankerInstalled',
+      'rerankerState',
       'llmKeyPresent',
       'configuredAgents',
     ] as const;
@@ -274,6 +295,27 @@ describe('defaultProbeDeps', () => {
     for (const m of members) {
       expect(typeof deps[m]).toBe('function');
       expect(() => deps[m]()).not.toThrow();
+    }
+  });
+
+  // Regression guard: the probe used to check `<dataDir>/transformers` for every
+  // mode, so a hosted reranker with no local cache was reported as degraded
+  // ("relevance reranking off") by the init dashboard.
+  it('classifies a hosted reranker as ok with no on-disk model', async () => {
+    // The temp dataDir has no `transformers/` cache, so any mode that probed it
+    // would come back degraded.
+    const { resetConfig } = await import('../../src/config.js');
+    const prevReranker = process.env.WIGOLO_RERANKER;
+    try {
+      for (const mode of ['remote', 'workers-ai', 'decision', 'jev']) {
+        process.env.WIGOLO_RERANKER = mode;
+        resetConfig();
+        expect(defaultProbeDeps().rerankerState(), mode).toBe('ok');
+      }
+    } finally {
+      if (prevReranker === undefined) delete process.env.WIGOLO_RERANKER;
+      else process.env.WIGOLO_RERANKER = prevReranker;
+      resetConfig();
     }
   });
 

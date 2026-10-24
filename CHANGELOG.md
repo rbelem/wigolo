@@ -6,7 +6,14 @@
 - Remote embeddings: `WIGOLO_EMBEDDING_API_BASE` sends cache embeddings to an OpenAI-compatible `/embeddings` endpoint. `WIGOLO_EMBEDDING_API_KEY` holds an optional Bearer token. A keyless base can use plain HTTP. A key needs HTTPS unless the host is loopback. Wigolo skips the bundled model when the base exists. (fixes #674)
 - `fetch` results flag block pages with an optional `blocked: { reason }` (`challenge`, `block_page` or `js_required`). A bot wall or "you've been blocked" banner that came back as content still returns its markdown, but callers no longer have to text-sniff it. (fixes #650)
 
+Rebased onto upstream v0.3.1, which brings upstream's Cohere-shape reranker in under the name the fork's Workers AI adapter used to hold.
+
+### ⚠️ Breaking
+- **The fork's Workers AI hosted reranker is now `WIGOLO_RERANKER=workers-ai`, not `remote`.** `remote` is upstream's Cohere-shape adapter, configured with `WIGOLO_RERANK_API_BASE` / `WIGOLO_RERANK_API_KEY`. A config that still says `WIGOLO_RERANKER=remote` with `WIGOLO_RERANKER_BASE_URL` should either switch the mode to `workers-ai` (same `_BASE_URL` / `_API_KEY` variables) or keep `remote` and move the endpoint to `WIGOLO_RERANK_API_BASE` / `WIGOLO_RERANK_API_KEY`.
+- The `custom` reranker mode is removed. It was a documented no-op that fell through to passthrough; use `none` to skip reranking.
+
 ### Changed
+- Rebased onto upstream v0.3.1 (Node 22+, remote reranking, hardened SSRF protection, OpenAlex/DBLP/OpenReview). The fork keeps its Workers AI adapter alongside upstream's `remote` under the mode name `workers-ai`.
 - `find_similar` scores only rows that carry the active model id, for the bundled model too. Rows written under an older model id no longer match, so an endpoint or model change hides them. (fixes #674)
 - A remote embedding endpoint trims input to `WIGOLO_EMBEDDING_MAX_TEXT_LENGTH` before the send, keeps at most 4 requests in flight, and falls back to the default timeout when the value is not a positive integer. (fixes #674)
 - `doctor --json` reports `ok_with_warnings` when a check reports `failed` but the run stays usable. The `status` field no longer reads `ok` in that case, so scripts that compare `status === "ok"` must accept the new value. (#673)

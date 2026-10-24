@@ -18,7 +18,7 @@
  * completions, messages, models, and systemone — no embeddings endpoint.
  */
 import type { EmbedProvider } from '../providers/embed-provider.js';
-import { postJsonCapped } from '../providers/hosted-http.js';
+import { assertHostedUrl, postJsonCapped } from '../providers/hosted-http.js';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
 
@@ -38,8 +38,10 @@ interface EmbeddingsResponse {
 export class OpenAICompatibleEmbedProvider implements EmbedProvider {
   readonly modelId: string;
   readonly dim: number;
-  private readonly baseUrl: string;
+  private baseUrl: string;
+  private readonly rawBaseUrl: string | null;
   private readonly apiKey: string | null;
+  private validated = false;
   /**
    * Set once the endpoint is known to need `dimensions` to hit the index width.
    * Without this the probe-then-adapt dance would run on EVERY embed call,
@@ -51,6 +53,7 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
     const cfg = getConfig();
     this.modelId = cfg.embeddingModel;
     this.dim = cfg.embeddingDim;
+    this.rawBaseUrl = cfg.embeddingBaseUrl;
     this.baseUrl = (cfg.embeddingBaseUrl ?? '').replace(/\/+$/, '');
     this.apiKey = cfg.embeddingApiKey;
   }
@@ -61,13 +64,15 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
    * loaded — that is the point of this provider.
    */
   async warmup(): Promise<void> {
-    if (!this.baseUrl) {
-      throw new Error(
-        'WIGOLO_EMBEDDING_PROVIDER=openai-compatible requires WIGOLO_EMBEDDING_BASE_URL ' +
-          '(e.g. https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1, or ' +
-          'https://openrouter.ai/api/v1)',
-      );
-    }
+    this.baseUrl = assertHostedUrl(
+      this.rawBaseUrl,
+      'WIGOLO_EMBEDDING_BASE_URL (WIGOLO_EMBEDDING_PROVIDER=openai-compatible)',
+      this.apiKey,
+      'WIGOLO_EMBEDDING_PROVIDER=openai-compatible requires WIGOLO_EMBEDDING_BASE_URL ' +
+        '(e.g. https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1, or ' +
+        'https://openrouter.ai/api/v1)',
+    );
+    this.validated = true;
     log.info('embed provider ready', {
       provider: 'embed',
       impl: 'openai-compatible',
@@ -79,7 +84,7 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    if (!this.baseUrl) await this.warmup();
+    if (!this.validated) await this.warmup();
 
     // Once the endpoint is known to need truncation, ask for the index width
     // directly — the probe below is a one-time discovery, not a per-call cost.

@@ -115,6 +115,21 @@ describe('WorkersAiRerankProvider', () => {
     );
   });
 
+  it('refuses to send a key over plain http to a non-loopback host', async () => {
+    use({ WIGOLO_RERANKER_BASE_URL: 'http://rerank.example/v1', WIGOLO_RERANKER_API_KEY: 'rk' });
+    await expect(new WorkersAiRerankProvider().rerank('q', candidates)).rejects.toThrow(
+      /requires HTTPS unless the endpoint is on loopback/,
+    );
+    expect(captured).toHaveLength(0);
+  });
+
+  it('rejects a base URL carrying credentials or a query', async () => {
+    use({ WIGOLO_RERANKER_BASE_URL: 'https://token@rerank.example/v1' });
+    await expect(new WorkersAiRerankProvider().rerank('q', candidates)).rejects.toThrow(
+      /without credentials, query, or fragment/,
+    );
+  });
+
   it('returns an empty list for no candidates without calling the network', async () => {
     use({ WIGOLO_RERANKER_BASE_URL: baseUrl });
     expect(await new WorkersAiRerankProvider().rerank('q', [])).toEqual([]);

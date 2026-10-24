@@ -171,6 +171,20 @@ describe('DecisionRerankProvider', () => {
     );
   });
 
+  it('refuses to send a key over plain http to a non-loopback host', async () => {
+    use({ WIGOLO_RERANKER_BASE_URL: 'http://decision.example/v1', WIGOLO_RERANKER_API_KEY: 'k' });
+    await expect(new DecisionRerankProvider().rerank('q', candidates)).rejects.toThrow(
+      /requires HTTPS unless the endpoint is on loopback/,
+    );
+  });
+
+  it('rejects a base URL carrying credentials or a query', async () => {
+    use({ WIGOLO_RERANKER_BASE_URL: 'https://decision.example/v1?token=abc' });
+    await expect(new DecisionRerankProvider().rerank('q', candidates)).rejects.toThrow(
+      /without credentials, query, or fragment/,
+    );
+  });
+
   it('allows an unauthenticated self-host (no API key)', async () => {
     // Self-hosted Kev / Ollaya commonly run without auth; the key is optional
     // or those deployments cannot be used at all.

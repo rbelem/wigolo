@@ -1,6 +1,7 @@
 import type { BackendStatus } from '../server/backend-status.js';
 import type { MultiBrowserPool } from '../fetch/browser-pool.js';
 import { getConfig } from '../config.js';
+import type { Config } from '../config.js';
 import { isEmbedModelResident } from '../embedding/fastembed-provider.js';
 
 export interface HealthProbeInput {
@@ -28,7 +29,7 @@ export interface HealthReport {
    * is in force, or whether an idle eviction has actually happened. */
   inference: {
     embedding: 'local' | 'hosted';
-    reranker: 'onnx' | 'remote' | 'decision' | 'none';
+    reranker: 'onnx' | 'none' | 'remote' | 'workers-ai' | 'decision';
     /** True only when the local fastembed ONNX session is loaded. */
     embed_model_resident: boolean;
   };
@@ -42,15 +43,35 @@ function inferenceStatus(): HealthReport['inference'] {
     const mode = cfg.reranker;
     return {
       embedding: cfg.embeddingProvider === 'openai-compatible' ? 'hosted' : 'local',
-      reranker: (mode === 'remote' || mode === 'decision' || mode === 'jev'
-        ? 'decision'
-        : mode === 'none'
-          ? 'none'
-          : 'onnx') as HealthReport['inference']['reranker'],
+      reranker: reportedReranker(mode),
       embed_model_resident: isEmbedModelResident(),
     };
   } catch {
     return { embedding: 'local', reranker: 'onnx', embed_model_resident: false };
+  }
+}
+
+/**
+ * Configured mode → the backend health reports.
+ *
+ * The point is fidelity: an operator reading `remote`/`workers-ai` must see the
+ * backend that actually serves their scores, not a collapsed label, or they
+ * debug the wrong endpoint. `jev` is the one deliberate collapse — it is a
+ * legacy alias of `decision`, never a fourth hosted backend.
+ */
+function reportedReranker(mode: Config['reranker']): HealthReport['inference']['reranker'] {
+  switch (mode) {
+    case 'onnx':
+      return 'onnx';
+    case 'none':
+      return 'none';
+    case 'remote':
+      return 'remote';
+    case 'workers-ai':
+      return 'workers-ai';
+    case 'decision':
+    case 'jev':
+      return 'decision';
   }
 }
 

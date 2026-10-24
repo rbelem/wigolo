@@ -11,9 +11,12 @@
 const DEFAULT_TIMEOUT_MS = 10000;
 
 // wigolo's core engine set already has a `deepseek` engine
-// (src/search/engines/deepseek.ts), so this plugin must not claim that name:
-// results from a same-named engine cannot be told apart, and the plugin loader
-// drops a plugin that collides with an already-registered engine name.
+// (src/search/engines/deepseek.ts), so this plugin must not claim that name.
+// The loader's duplicate check only covers names registered BY plugins
+// (src/plugins/loader.ts seeds it from the plugin list, not from core), so a
+// colliding name would load silently and its results would carry `engine:
+// deepseek`, indistinguishable from core's — including for engine-quality and
+// engine-health bookkeeping.
 const ENGINE_NAME = 'deepseek-tools';
 
 function asString(value) {

@@ -18,6 +18,7 @@ vi.mock('../../../src/config.js', () => ({
 }));
 
 const { getConfig } = await import('../../../src/config.js');
+const { getRerankProvider } = await import('../../../src/providers/rerank-provider.js');
 const { extractHighlights, fallbackHighlights, splitIntoPassages } = await import(
   '../../../src/search/highlights.js'
 );
@@ -113,12 +114,28 @@ describe('extractHighlights', () => {
     } as ReturnType<typeof getConfig>);
   });
 
-  it('uses remote reranking for passages', async () => {
-    vi.mocked(getConfig).mockReturnValue({ reranker: 'remote' } as ReturnType<typeof getConfig>);
+  // This test used to assert the opposite ('uses remote reranking for passages').
+  // That expectation encoded the defect: `remote` is HOSTED, and extractHighlights
+  // runs on every fetch and on the evidence pass, so the assertion pinned "send
+  // every fetched page's paragraphs to a third party, unbounded". Hosted modes
+  // must not reach the provider from here at all.
+  it('never calls a HOSTED reranker — highlight ranking stays in-process', async () => {
+    rerankMock.mockResolvedValue([{ id: '0', score: 0.9 }]);
+    for (const mode of ['remote', 'workers-ai', 'decision', 'jev']) {
+      vi.mocked(getConfig).mockReturnValue({ reranker: mode } as ReturnType<typeof getConfig>);
+      const out = await extractHighlights('React Server Components', results, 1);
+      expect(out.reranker_used).toBe(false);
+      expect(out.highlights.length).toBeGreaterThan(0);
+    }
+    expect(vi.mocked(getRerankProvider)).not.toHaveBeenCalled();
+    expect(rerankMock).not.toHaveBeenCalled();
+  });
+
+  it('still ranks locally on the ONNX cross-encoder', async () => {
     rerankMock.mockResolvedValue([{ id: '0', score: 0.9 }]);
     const out = await extractHighlights('React Server Components', results, 1);
+    expect(vi.mocked(getRerankProvider)).toHaveBeenCalled();
     expect(out.reranker_used).toBe(true);
-    expect(rerankMock).toHaveBeenCalled();
   });
 
   it('uses rerank provider when configured and sorts passages by score', async () => {

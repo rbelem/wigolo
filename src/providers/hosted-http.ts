@@ -6,6 +6,8 @@
  * keeps one set of safety properties instead of three drifting copies:
  *
  *  - a hard timeout, so a wedged endpoint cannot hang a fetch/crawl;
+ *  - `redirect: 'error'`, so a 3xx cannot forward the request body to a host
+ *    the operator never configured;
  *  - a HARD RESPONSE SIZE CAP. A hosted endpoint is untrusted input — without
  *    a cap, `res.json()` on a broken or hostile server buffers an unbounded
  *    body straight into memory, which is exactly the failure this whole
@@ -37,8 +39,9 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const ERROR_EXCERPT_CHARS = 300;
 
 /** A key sent to this machine never crosses a network, so plain http is fine there. */
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  return host === 'localhost' || host === '[::1]' || host === '::1' || /^127\.\d+\.\d+\.\d+$/.test(host);
 }
 
 /**
@@ -98,38 +101,36 @@ export async function postJsonCapped<T>(req: HostedJsonRequest): Promise<T> {
 }
 
 async function once<T>(req: HostedJsonRequest, maxBytes: number): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), req.timeoutMs);
+  const res = await fetch(req.url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(req.apiKey ? { authorization: `Bearer ${req.apiKey}` } : {}),
+    },
+    body: JSON.stringify(req.body),
+    signal: AbortSignal.timeout(req.timeoutMs),
+    // Fail closed on a 3xx. The Fetch spec strips Authorization cross-origin,
+    // but the request body (query text, page content) is not stripped — a
+    // redirect would hand it to a host the operator never configured.
+    redirect: 'error',
+  });
+
+  if (!res.ok) {
+    const detail = await readCapped(res, 64 * 1024).catch(() => '');
+    const err = new Error(
+      `${req.label} request failed: HTTP ${res.status}` +
+        (detail ? ` — ${detail.slice(0, ERROR_EXCERPT_CHARS)}` : ''),
+    );
+    // Surface the status so withFetchRetry can classify 502/503/504.
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+
+  const raw = await readCapped(res, maxBytes);
   try {
-    const res = await fetch(req.url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(req.apiKey ? { authorization: `Bearer ${req.apiKey}` } : {}),
-      },
-      body: JSON.stringify(req.body),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const detail = await readCapped(res, 64 * 1024).catch(() => '');
-      const err = new Error(
-        `${req.label} request failed: HTTP ${res.status}` +
-          (detail ? ` — ${detail.slice(0, ERROR_EXCERPT_CHARS)}` : ''),
-      );
-      // Surface the status so withFetchRetry can classify 502/503/504.
-      (err as Error & { status?: number }).status = res.status;
-      throw err;
-    }
-
-    const raw = await readCapped(res, maxBytes);
-    try {
-      return JSON.parse(raw) as T;
-    } catch {
-      throw new Error(`${req.label} returned a non-JSON body (${raw.length} bytes)`);
-    }
-  } finally {
-    clearTimeout(timer);
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new Error(`${req.label} returned a non-JSON body (${raw.length} bytes)`);
   }
 }
 

@@ -10,6 +10,12 @@ Rebased onto upstream v0.3.0, which brings upstream's Cohere-shape reranker in u
 
 ### Changed
 - Rebased onto upstream v0.3.0 (Node 22+, remote reranking, hardened SSRF protection, OpenAlex/DBLP/OpenReview). The fork keeps its Workers AI adapter alongside upstream's `remote` under the mode name `workers-ai`.
+- **Hosted rerankers are no longer called from the highlight pass.** `extractHighlights` (every fetch, and the evidence pass of a default search) now stays on the in-process cross-encoder; hosted ranking happens only inside the time-bounded fold. Previously every fetched page sent its paragraphs to the remote endpoint.
+- **The rerank fold has a real deadline** (8s, `WIGOLO_RERANKER_FOLD_BUDGET_MS`): each query variant races the remaining time, a variant that loses is abandoned, and the scores already gathered are kept. After a timeout, reranking is skipped for 60s instead of re-paying the deadline on every query.
+- **Decision reranker scores**: a whole-number `score` is a bucket index (0 = Irrelevant … 3 = Highly relevant), a fraction is a probability, and an explicitly named `probability`/`confidence` field wins either way. All-junk batches are recognised on the adapter's own scale — probability hosts use 0.5, logits 0.
+- **Credentials are env/keychain only**: `braveApiKey`, `deepseekApiKey`, `githubToken`, `embeddingApiKey` and the reranker keys are no longer read from `config.json`. A stale value in that file is ignored (with a warning naming the env var) rather than honoured.
+- Remote (`Cohere`-shape) rerank now goes through the shared hosted-HTTP path: bounded response size and redirects refused, like the other hosted providers.
+- `cache compact` / `vacuum` documented across the SDKs, `docs/tools.md` and the skill packs; the legacy skill-hash ledger is now a strict union (54 → 69 hashes, previous release tags covered).
 
 ## v0.3.0 — 2026-10-21
 

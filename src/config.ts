@@ -123,17 +123,24 @@ export interface Config {
   userAgent: string | null;
   validateLinks: boolean;
   respectRobotsTxt: boolean;
+  /**
+   * Brave Search API key. Env `BRAVE_API_KEY` or the OS keychain only —
+   * never read from config.json.
+   */
   braveApiKey: string | null;
   /**
    * DeepSeek search API key. When set, the deepseek adapter joins the general
-   * and code pools, the same opt-in shape as `braveApiKey`.
+   * and code pools, the same opt-in shape as `braveApiKey`. Env
+   * `DEEPSEEK_API_KEY` or the OS keychain only — never read from config.json.
    */
   deepseekApiKey: string | null;
   /** GitHub API personal access token. When set, the github-code adapter
    * passes it as a Bearer token so search calls run authenticated. Lifts
    * the 10 req/min unauthed cap to 30 req/min, eliminates the most common
    * 401 path for org-private result hydration, and is the env var named
-   * in engine_warnings hints. Optional — the adapter still runs unauthed. */
+   * in engine_warnings hints. Optional — the adapter still runs unauthed.
+   * Env `WIGOLO_GITHUB_TOKEN` or the OS keychain only — never read from
+   * config.json. */
   githubToken: string | null;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   logFormat: 'json' | 'text';
@@ -156,6 +163,8 @@ export interface Config {
   rerankerReadyTimeoutMs: number;
   rerankerRequestTimeoutMs: number;
   rerankerIdleTimeoutMs: number;
+  /** Total time one rerank fold may spend, across every query variant. */
+  rerankerFoldBudgetMs: number;
   relevanceThreshold: number;
   findSimilarColdStartThreshold: number;
   bootstrapMaxAttempts: number;
@@ -186,7 +195,9 @@ export interface Config {
   /** Base URL for the hosted embeddings API, e.g.
    * `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`. */
   embeddingBaseUrl: string | null;
-  /** Bearer token for the hosted embeddings API. */
+  /** Bearer token for the hosted embeddings API. Env
+   * `WIGOLO_EMBEDDING_API_KEY` or the OS keychain only — never read from
+   * config.json. */
   embeddingApiKey: string | null;
   /**
    * Width of the vector index. NOT configurable: `vec_documents.embedding` is
@@ -623,11 +634,26 @@ const TLS_BROWSER_PATTERN = /^(chrome|firefox|safari|edge|opera)_\d+$/;
 const VECTOR_INDEX_DIM = 384;
 
 /**
- * The reranker modes config will accept. Kept next to the union it mirrors:
- * `reranker-mode.ts` cannot be imported here (it imports this module), and a
- * value outside this set has no provider to serve it.
+ * The reranker modes config will accept.
+ *
+ * Derived from the classification table in `search/rerank-mode.ts` so there is
+ * exactly ONE list: adding a mode there makes it acceptable here in the same
+ * edit, and a test asserts the two agree. The import is cycle-safe — that module
+ * imports this one only for `getConfig`/`Config`, and reads them at call time,
+ * never during module evaluation.
  */
-const RERANKER_MODES = new Set<Config['reranker']>([
+/**
+ * The reranker modes config will accept.
+ *
+ * A literal copy of the union on purpose. Importing `RERANKER_MODES` from
+ * `search/rerank-mode.ts` would invert this module's dependency direction: any
+ * test that mocks `config.js` with `importOriginal` loads the REAL config graph,
+ * which would then pull rerank-mode in bound to the real config — silently
+ * defeating the mock for every module that reads the mode. `rerank-mode.test.ts`
+ * asserts this list equals the classification table, which is the guarantee the
+ * import was there for.
+ */
+export const ACCEPTED_RERANKER_MODES: ReadonlySet<Config['reranker']> = new Set([
   'onnx',
   'none',
   'remote',
@@ -635,6 +661,37 @@ const RERANKER_MODES = new Set<Config['reranker']>([
   'decision',
   'jev',
 ]);
+
+/**
+ * Map a raw `WIGOLO_RERANKER` / persisted value onto a real mode.
+ *
+ * Shared by config resolution and the TUI so the two cannot disagree: the
+ * settings screen used to render the raw stored string, which showed
+ * `flashrank` or a typo while the runtime was running `onnx`/`none`. Returns
+ * `legacyAlias` instead of warning, because the caller decides whether a line
+ * of stderr belongs there.
+ */
+export function normalizeRerankerMode(raw: string | null | undefined): {
+  mode: Config['reranker'];
+  legacyAlias?: string;
+} {
+  const value = (raw ?? '').trim();
+  if (!value) return { mode: 'onnx' };
+  if (value === 'flashrank') return { mode: 'onnx', legacyAlias: value };
+  // The TUI's reranker control is a boolean toggle, and propagation writes it
+  // as the string 'true'/'false'. Left unmapped, 'true' is not a scoring mode
+  // and would SILENTLY disable reranking.
+  if (value === 'true') return { mode: 'onnx' };
+  if (value === 'false') return { mode: 'none' };
+  // Anything else that is not a real mode (a typo, or the removed 'custom')
+  // used to be cast straight into the union: it then scored as "reranking is
+  // on" in the gates while every provider fell through to passthrough —
+  // silent, and undiagnosable from the outside.
+  if (!ACCEPTED_RERANKER_MODES.has(value as Config['reranker'])) {
+    return { mode: 'none', legacyAlias: value };
+  }
+  return { mode: value as Config['reranker'] };
+}
 
 export function validateTlsBrowser(raw: string | null | undefined, fallback: string): string {
   if (!raw) return fallback;
@@ -674,6 +731,49 @@ function resolveKeychainSecret(envKey: string, settingsKey: string): string | nu
   const envVal = process.env[envKey];
   if (envVal !== undefined && envVal !== '') return envVal;
   return readCredentialFromKeychain(credentialKeychainUser(settingsKey));
+}
+
+/**
+ * Settings keys whose legacy config.json value has already been reported.
+ * Process-scoped on purpose: `resetConfig()` runs on a TUI re-init, and
+ * re-reading the same stale value every reload would be noise. Tests that
+ * assert the warning use `_resetLegacySecretWarningsForTests()`.
+ */
+const reportedLegacySecrets = new Set<string>();
+
+/** Test hook: clear the once-per-process stale-secret warning dedupe. */
+export function _resetLegacySecretWarningsForTests(): void {
+  reportedLegacySecrets.clear();
+}
+
+/**
+ * Resolve a credential env-or-keychain only, warning ONCE when config.json
+ * still holds a cleartext value for it.
+ *
+ * The write denylist in persisted-config only stops NEW writes. A config.json
+ * that predates it — or one edited by hand — can still carry the key, and
+ * silently ignoring it is the bad case: a credential that used to work just
+ * stops, with no explanation. So the value is not deleted (it is the user's
+ * file) but reported once, naming the env var that replaces it. No warning
+ * when the env var is already set: the stored value was never authoritative
+ * then, so nothing changed for the caller.
+ */
+function resolveKeychainOnlySecret(
+  envKey: string,
+  settingsKey: string,
+  settings: Record<string, unknown>,
+): string | null {
+  const legacy = settings[settingsKey];
+  const envUnset = !process.env[envKey];
+  if (envUnset && typeof legacy === 'string' && legacy !== '' && !reportedLegacySecrets.has(settingsKey)) {
+    reportedLegacySecrets.add(settingsKey);
+    process.stderr.write(
+      `[wigolo] ${settingsKey} in config.json is ignored: credentials are read from the ` +
+        `environment or the OS keychain, never from config.json. Set ${envKey} instead ` +
+        `(the stored value is left in place, unused).\n`,
+    );
+  }
+  return resolveKeychainSecret(envKey, settingsKey);
 }
 
 /** Default user-agent for the opt-in Reddit OAuth-API path. Generic +
@@ -771,37 +871,31 @@ export function getConfig(): Config {
     userAgent: envStr('USER_AGENT', null, settings, 'userAgent'),
     validateLinks: envBool('VALIDATE_LINKS', true, settings, 'validateLinks'),
     respectRobotsTxt: envBool('RESPECT_ROBOTS_TXT', true, settings, 'respectRobotsTxt'),
-    braveApiKey: envStr('BRAVE_API_KEY', null, settings, 'braveApiKey'),
-    deepseekApiKey: envStr('DEEPSEEK_API_KEY', null, settings, 'deepseekApiKey'),
-    githubToken: envStr('WIGOLO_GITHUB_TOKEN', null, settings, 'githubToken'),
+    // Credentials: env or OS keychain only. A hand-edited config.json that
+    // still holds one is ignored, warned about once, and never used.
+    braveApiKey: resolveKeychainOnlySecret('BRAVE_API_KEY', 'braveApiKey', settings),
+    deepseekApiKey: resolveKeychainOnlySecret('DEEPSEEK_API_KEY', 'deepseekApiKey', settings),
+    githubToken: resolveKeychainOnlySecret('WIGOLO_GITHUB_TOKEN', 'githubToken', settings),
     logLevel: (envStr('LOG_LEVEL', 'info', settings, 'logLevel') as Config['logLevel']),
     logFormat: (envStr('LOG_FORMAT', 'json', settings, 'logFormat') as Config['logFormat']),
     reranker: (() => {
-      const raw = envStr('WIGOLO_RERANKER', null, settings, 'reranker') ?? 'onnx';
-      if (raw === 'flashrank') {
+      const { mode, legacyAlias } = normalizeRerankerMode(
+        envStr('WIGOLO_RERANKER', null, settings, 'reranker'),
+      );
+      // Only the resolve path warns: the TUI calls the same normaliser on every
+      // render, where a stderr line per frame would be noise.
+      if (legacyAlias === 'flashrank') {
         process.stderr.write(
           '[wigolo] WIGOLO_RERANKER=flashrank is a legacy alias; treating as onnx. ' +
           'The reranker runs as a Python subprocess; install via "wigolo warmup --reranker".\n',
         );
-        return 'onnx';
-      }
-      // The TUI's reranker control is a boolean toggle, and propagation writes
-      // it as the string 'true'/'false'. Left unmapped, 'true' is not a scoring
-      // mode and would SILENTLY disable reranking.
-      if (raw === 'true') return 'onnx';
-      if (raw === 'false') return 'none';
-      // Anything else that is not a real mode (a typo, or the removed 'custom')
-      // used to be cast straight into the union: it then scored as "reranking
-      // is on" in the gates while every provider fell through to passthrough —
-      // silent, and undiagnosable from the outside. Say so and disable instead.
-      if (!RERANKER_MODES.has(raw as Config['reranker'])) {
+      } else if (legacyAlias) {
         process.stderr.write(
-          `[wigolo] WIGOLO_RERANKER=${raw} is not a reranker mode ` +
-          `(${[...RERANKER_MODES].join(', ')}); reranking disabled (none).\n`,
+          `[wigolo] WIGOLO_RERANKER=${legacyAlias} is not a reranker mode ` +
+          `(${[...ACCEPTED_RERANKER_MODES].join(', ')}); reranking disabled (none).\n`,
         );
-        return 'none';
       }
-      return raw as Config['reranker'];
+      return mode;
     })(),
     rerankerModel: envStr('WIGOLO_RERANKER_MODEL', 'bge-reranker-v2-m3', settings, 'rerankerModel') ?? 'bge-reranker-v2-m3',
     rerankApiBase: envStr('WIGOLO_RERANK_API_BASE', null, settings, 'rerankApiBase'),
@@ -815,6 +909,7 @@ export function getConfig(): Config {
     rerankerReadyTimeoutMs: envInt('WIGOLO_RERANKER_READY_TIMEOUT_MS', 60_000, settings, 'rerankerReadyTimeoutMs'),
     rerankerRequestTimeoutMs: envInt('WIGOLO_RERANKER_REQUEST_TIMEOUT_MS', 30_000, settings, 'rerankerRequestTimeoutMs'),
     rerankerIdleTimeoutMs: envInt('WIGOLO_RERANKER_IDLE_TIMEOUT_MS', 300_000, settings, 'rerankerIdleTimeoutMs'),
+    rerankerFoldBudgetMs: envInt('WIGOLO_RERANKER_FOLD_BUDGET_MS', 8_000, settings, 'rerankerFoldBudgetMs'),
     relevanceThreshold: (() => {
       const raw = envStr('WIGOLO_RELEVANCE_THRESHOLD', null, settings, 'relevanceThreshold');
       if (raw === null || raw === '') return 0;
@@ -854,7 +949,9 @@ export function getConfig(): Config {
       return 'local';
     })(),
     embeddingBaseUrl: envStr('WIGOLO_EMBEDDING_BASE_URL', null, settings, 'embeddingBaseUrl'),
-    embeddingApiKey: envStr('WIGOLO_EMBEDDING_API_KEY', null, settings, 'embeddingApiKey'),
+    // Env or keychain only, like the search credentials above: a hosted-
+    // inference bearer token must not be readable from config.json.
+    embeddingApiKey: resolveKeychainOnlySecret('WIGOLO_EMBEDDING_API_KEY', 'embeddingApiKey', settings),
     // Derived from the DDL (`vec_documents.embedding float[384]`), not a knob.
     // Exposing it as an env var could only ever accept one valid value while
     // letting a user set an impossible one.

@@ -78,12 +78,18 @@ const AMBIENT_CONFIG_VARS = [
 
 for (const key of AMBIENT_CONFIG_VARS) delete process.env[key];
 
-// The OS keychain is the other half of "the developer's real configuration".
-// `resolveKeychainSecret` reaches libsecret/Keychain when an env var is absent,
-// so a stored key would answer where CI answers `undefined` — and a test that
-// asserts "not configured" would pass or fail by desktop state. Install an
-// inert adapter; a test that exercises the keychain path injects its own with
-// `_setCredentialKeychainForTests`.
+// KNOWN LIMITATION: the OS keychain is the one piece of ambient state this file
+// does NOT neutralise. `resolveKeychainSecret` falls back to libsecret/Keychain
+// when the env var is absent, so a developer with a stored credential can still
+// see a test that asserts "not configured" behave differently from CI.
+//
+// Installing an inert adapter here was tried and reverted: importing the
+// persisted-config graph from a setup file pins it — and its import of config.js
+// — to the REAL module before a test file's `vi.mock` factory can substitute it,
+// which silently defeated mocked-config tests (the balanced rerank-fold
+// integration assertions failed exactly that way). A test that needs a
+// deterministic keychain injects its own with `_setCredentialKeychainForTests`,
+// which is the supported seam.
 
 // Isolate the data dir so the suite NEVER writes to a developer's real
 // ~/.wigolo (a vitest worker otherwise opens the live wigolo.db). One dir per
@@ -169,7 +175,7 @@ const CI_ENV_KEYS = [
 
 const savedCIEnv: Partial<Record<(typeof CI_ENV_KEYS)[number], string | undefined>> = {};
 
-beforeEach(() => {
+beforeEach(async () => {
   ensureTestDataDir();
   ensureTestConfigPath();
   for (const key of CI_ENV_KEYS) {

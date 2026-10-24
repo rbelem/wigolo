@@ -78,6 +78,32 @@ export interface FoldOptions {
   now?: () => number;
 }
 
+/** Sentinel for "the variant did not answer before the fold's deadline". */
+const BUDGET_EXCEEDED = Symbol('rerank-budget-exceeded');
+
+/**
+ * Resolve with the promise's value, or with BUDGET_EXCEEDED once `ms` elapses.
+ *
+ * The provider's own request timeout still applies underneath; this bounds what
+ * the FOLD is willing to wait in total. The losing fetch keeps running in the
+ * background (cancelling it would need an abort signal threaded through the
+ * provider interface) — the point here is that search stops waiting for it.
+ */
+async function raceBudget<T>(work: Promise<T>, ms: number): Promise<T | typeof BUDGET_EXCEEDED> {
+  if (ms <= 0) return BUDGET_EXCEEDED;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<typeof BUDGET_EXCEEDED>((resolve) => {
+        timer = setTimeout(() => resolve(BUDGET_EXCEEDED), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function defaultRerankFn(): RerankFn {
   return async (query, candidates) => {
     const provider = await getRerankProvider();
@@ -126,30 +152,52 @@ export async function foldRerankIntoOrdering(
   const budgetMs = opts.budgetMs ?? RERANK_FOLD_BUDGET_MS;
   const now = opts.now ?? Date.now;
   const startedAt = now();
-  try {
-    for (let qi = 0; qi < queries.length; qi++) {
-      // Check between variants, never before the first: one slow call should
-      // not void the whole hedge, but the remaining ones must not stack up.
-      if (qi > 0 && now() - startedAt > budgetMs) {
-        log.debug('rerank-fold budget exhausted, keeping the variants already scored', {
-          queries: queries.length,
-          completed: qi,
+  for (let qi = 0; qi < queries.length; qi++) {
+    // The budget is a deadline, not just a gate on launching the next variant:
+    // a hosted call that hangs would otherwise hold the whole fold for its own
+    // request timeout (30s by default), per variant. Whichever bound is smaller
+    // wins, and a variant that loses the race is abandoned rather than waited
+    // on — the scores already gathered survive.
+    const remainingMs = budgetMs - (now() - startedAt);
+    if (qi > 0 && remainingMs <= 0) {
+      log.debug('rerank-fold budget spent, keeping the variants already scored', {
+        variants: queries.length,
+        completed: qi,
+        budgetMs,
+      });
+      break;
+    }
+    try {
+      const scoreMap = await raceBudget(rerankFn(queries[qi], candidates), remainingMs);
+      if (scoreMap === BUDGET_EXCEEDED) {
+        log.debug('rerank-fold variant exceeded the budget, keeping earlier scores', {
+          variant: qi + 1,
+          variants: queries.length,
           budgetMs,
         });
         break;
       }
-      const scoreMap = await rerankFn(queries[qi], candidates);
       for (let i = 0; i < windowResults.length; i++) {
         const s = scoreMap.get(String(i));
         if (typeof s === 'number' && s > logits[i]) logits[i] = s;
       }
+    } catch (err) {
+      // warn, not debug: a hosted reranker that cannot be constructed (a moved
+      // mode, a missing base URL) degrades every search to unranked ordering,
+      // and at debug nobody ever sees why relevance got worse.
+      if (qi === 0) {
+        log.warn('rerank-fold failed, keeping composite ordering', { error: String(err) });
+        return results;
+      }
+      // A later variant failing must not throw away a hedge that already
+      // scored: keep what completed.
+      log.warn('rerank-fold variant failed, keeping earlier scores', {
+        variant: qi + 1,
+        variants: queries.length,
+        error: String(err),
+      });
+      break;
     }
-  } catch (err) {
-    // warn, not debug: a hosted reranker that cannot be constructed (a moved
-    // mode, a missing base URL) degrades every search to unranked ordering, and
-    // at debug nobody ever sees why relevance got worse.
-    log.warn('rerank-fold failed, keeping composite ordering', { error: String(err) });
-    return results;
   }
   // candidates the provider never scored -> treat as irrelevant (below the
   // tier threshold), not relevant. Only bites a misbehaving injected rerank

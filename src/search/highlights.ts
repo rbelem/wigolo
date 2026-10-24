@@ -1,7 +1,7 @@
 import type { SearchResultItem, Citation, Highlight } from '../types.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
 import { getConfig } from '../config.js';
-import { rerankerActive } from './rerank-mode.js';
+import { rerankerModeSpec } from './rerank-mode.js';
 import { createLogger } from '../logger.js';
 import { parseHeadings, lineStartCharOffsets } from '../extraction/markdown.js';
 
@@ -151,8 +151,16 @@ export async function extractHighlights(
     };
   }
 
-  const cfg = getConfig();
-  if (rerankerActive()) {
+  // LOCAL MODES ONLY. This function runs on every successful fetch
+  // (`tools/fetch.ts`) and on the default search's evidence pass
+  // (`search/evidence.ts`), with no candidate cap and no time budget of its own.
+  // Pointing it at a hosted reranker therefore shipped every paragraph of every
+  // fetched page to a remote endpoint — and the Decision adapter splits the
+  // batch into sequential calls, so one hung endpoint cost ~30s per fetch.
+  // Ranking highlights is a bounded, best-effort nicety; only the in-process
+  // cross-encoder is bounded, so a hosted mode gets the unranked fallback.
+  const spec = rerankerModeSpec(getConfig().reranker);
+  if (spec?.scores && !spec.hosted) {
     try {
       const provider = await getRerankProvider();
       const scored = await provider.rerank(
@@ -176,7 +184,9 @@ export async function extractHighlights(
         return { highlights, citations, reranker_used: true };
       }
     } catch (err) {
-      log.debug('rerank provider failed, using fallback passages', { error: String(err) });
+      // warn, not debug: a failed highlight pass is the reason results come back
+      // unhighlighted, and debug made that indistinguishable from "reranking off".
+      log.warn('highlight rerank failed, using fallback passages', { error: String(err) });
     }
   }
 

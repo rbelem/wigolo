@@ -45,6 +45,9 @@ export type PersistedConfigPatch = Partial<Omit<PersistedConfig, 'version'>>;
  */
 export const SETTINGS_SECRETS_DENYLIST = new Set<string>([
   'braveApiKey',
+  // Search-credential sibling of braveApiKey/githubToken; it was readable from
+  // config.json and writable through the save path before this entry.
+  'deepseekApiKey',
   'githubToken',
   'rerankApiKey',
   'redditClientSecret',

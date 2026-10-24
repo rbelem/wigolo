@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Config } from '../../../src/config.js';
 import { RemoteRerankProvider } from '../../../src/search/reranker/remote-rerank-provider.js';
 
@@ -32,7 +34,7 @@ describe('RemoteRerankProvider', () => {
     expect(url).toBe('http://127.0.0.1:8082/v1/rerank');
     expect(options.method).toBe('POST');
     expect(options.redirect).toBe('error');
-    expect(options.headers).toEqual({ 'Content-Type': 'application/json' });
+    expect(options.headers).toEqual({ 'content-type': 'application/json' });
     expect(JSON.parse(options.body)).toEqual({
       model: 'test-model', query: 'query', documents: ['document one', 'document two'], top_n: 2,
     });
@@ -47,7 +49,7 @@ describe('RemoteRerankProvider', () => {
     expect(await new RemoteRerankProvider(config({ rerankApiBase: 'https://rerank.example/v1', rerankApiKey: 'secret' })).rerank('q', candidates, 1))
       .toEqual([{ id: 'second', score: 0.8 }]);
     const options = fetchMock.mock.calls[0][1];
-    expect(options.headers.Authorization).toBe('Bearer secret');
+    expect(options.headers.authorization).toBe('Bearer secret');
     expect(JSON.parse(options.body).top_n).toBe(1);
   });
 
@@ -84,24 +86,57 @@ describe('RemoteRerankProvider', () => {
     expect(await new RemoteRerankProvider(config()).rerank('q', candidates, 1)).toEqual([{ id: 'second', score: 0.9 }]);
   });
 
-  it('reports HTTP status without reading or exposing the response body', async () => {
-    const text = vi.fn(() => { throw new Error('body should not be read'); });
-    const cancel = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 502, text, body: { cancel } }));
+  it('reports HTTP status without leaking the key or echoing the body', async () => {
+    // The shared client reads a bounded excerpt of an error body for its own
+    // message; this provider's mapping must not surface it.
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response('upstream boom at https://internal.example/', { status: 502 }));
+    vi.stubGlobal('fetch', fetchMock);
     const error = await new RemoteRerankProvider(config({ rerankApiBase: 'https://rerank.example/v1', rerankApiKey: 'secret' })).rerank('q', candidates)
       .catch((err: unknown) => err);
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain('HTTP 502');
-    expect((error as Error).message).not.toContain('secret');
     expect((error as Error).message).toBe('Remote rerank HTTP 502');
-    expect(text).not.toHaveBeenCalled();
-    expect(cancel).toHaveBeenCalledOnce();
+    expect((error as Error).message).not.toContain('secret');
+    expect((error as Error).message).not.toContain('upstream boom');
+    // 502 is in the shared transient set, so it is retried once before throwing.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a 3xx instead of following it to another host', async () => {
+    // `redirect: 'error'` is the property under test: following a redirect
+    // would replay the query and page text at whatever host Location names.
+    // The target here WOULD answer a valid rerank, so a followed redirect
+    // would make this call succeed instead of throwing.
+    const hits: string[] = [];
+    let base = '';
+    const server = http.createServer((req, res) => {
+      hits.push(req.url ?? '');
+      if (req.url === '/rerank') {
+        res.writeHead(302, { location: `${base}/elsewhere` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ results: [{ index: 0, score: 0.9 }, { index: 1, score: 0.1 }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => {
+      base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      resolve();
+    }));
+    try {
+      await expect(new RemoteRerankProvider(config({ rerankApiBase: base })).rerank('q', candidates))
+        .rejects.toThrow('request failed');
+      expect(hits).toContain('/rerank');
+      expect(hits).not.toContain('/elsewhere');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('rejects invalid JSON and malformed or ambiguous results', async () => {
     const provider = new RemoteRerankProvider(config());
     const cases: Array<[Response, string]> = [
-      [new Response('{invalid'), 'invalid JSON'],
+      [new Response('{invalid'), 'non-JSON body'],
       [new Response('{}'), 'results array'],
       [reply([{ index: 0, score: 0.9 }]), 'fewer results'],
       [reply([{ index: 0, score: 0.9 }, { index: 0, score: 0.8 }]), 'duplicate index'],
@@ -116,10 +151,11 @@ describe('RemoteRerankProvider', () => {
   });
 
   it('rejects non-finite scores even if a service returns them', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ results: [{ index: 0, score: NaN }, { index: 1, score: 0.8 }] }),
-    }));
+    // `1e999` parses to Infinity — the only way JSON can carry a non-finite.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      '{"results":[{"index":0,"score":1e999},{"index":1,"score":0.8}]}',
+      { status: 200 },
+    )));
     await expect(new RemoteRerankProvider(config()).rerank('q', candidates)).rejects.toThrow('non-finite');
   });
 });

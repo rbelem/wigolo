@@ -1,3 +1,4 @@
+import { ACCEPTED_RERANKER_MODES } from '../../../src/config.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resetConfig, type Config } from '../../../src/config.js';
 import { RERANKER_MODES, rerankerActive, rerankerIsHosted } from '../../../src/search/rerank-mode.js';
@@ -98,5 +99,14 @@ describe('RERANKER_MODES', () => {
           : 'logit',
       );
     }
+  });
+});
+
+// The classification table and config's accepted-value set are two literals (see
+// the comment on ACCEPTED_RERANKER_MODES for why config must not import this
+// module). They are only safe while they agree, so this is the guard.
+describe('config and the classification table agree', () => {
+  it('accepts exactly the modes the table classifies', () => {
+    expect([...ACCEPTED_RERANKER_MODES].sort()).toEqual(Object.keys(RERANKER_MODES).sort());
   });
 });

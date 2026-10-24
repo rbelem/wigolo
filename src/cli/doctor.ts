@@ -11,7 +11,7 @@ import { isProcessAlive } from '../searxng/process.js';
 import { resolveContainerCli } from '../searxng/docker.js';
 import { getConfig } from '../config.js';
 import { RemoteRerankProvider } from '../search/reranker/remote-rerank-provider.js';
-import { assertHostedUrl } from '../providers/hosted-http.js';
+import { assertHostedUrl, isLoopbackHost } from '../providers/hosted-http.js';
 import { rerankerIsHosted } from '../search/rerank-mode.js';
 import { initDatabase, closeDatabase } from '../cache/db.js';
 import { isNativeAbiMismatch } from '../util/native-abi.js';
@@ -534,14 +534,30 @@ async function daemonReachable(dataDir: string): Promise<boolean> {
   }
 }
 
+/**
+ * `daemonHost` is user-settable (`WIGOLO_DAEMON_HOST`), and the breaker-reset
+ * route carries the admin bearer token. The URL built below is plain http, so
+ * a non-loopback host would put that token on the wire in cleartext for anyone
+ * on the path. Returns the reason to skip, or null when the POST may go out.
+ */
+export function daemonAdminRefusal(host: string): string | null {
+  if (isLoopbackHost(host)) return null;
+  return `WIGOLO_DAEMON_HOST ${host} is not loopback and the admin route is plain http — admin token not sent`;
+}
+
 /** POST the authed breaker reset to a running daemon. Best-effort: a failure is
  * reported but never turns doctor into a hard failure (the in-process reset
  * already happened). */
-async function postDaemonBreakerReset(dataDir: string): Promise<{ ok: boolean; error?: string }> {
+export async function postDaemonBreakerReset(
+  dataDir: string,
+): Promise<{ ok: boolean; error?: string; skipped?: boolean }> {
+  const cfg = getConfig();
+  // Before the token read and before any socket: a refused host gets no request.
+  const refusal = daemonAdminRefusal(cfg.daemonHost);
+  if (refusal) return { ok: false, skipped: true, error: refusal };
   const token = readAdminToken(dataDir);
   if (!token) return { ok: false, error: 'no admin token on disk' };
   try {
-    const cfg = getConfig();
     const resp = await fetch(`http://${cfg.daemonHost}:${cfg.daemonPort}/admin/reset-breakers`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
@@ -686,8 +702,9 @@ async function applyDoctorFixes(dataDir: string, checks: DoctorCheck[]): Promise
       let error: string | undefined;
       if (await daemonReachable(dataDir)) {
         const daemonReset = await postDaemonBreakerReset(dataDir);
-        if (!daemonReset.ok) error = `daemon reset failed: ${daemonReset.error}`;
-        else out(`[wigolo doctor] --fix: daemon breakers reset via admin route`);
+        if (daemonReset.ok) out(`[wigolo doctor] --fix: daemon breakers reset via admin route`);
+        else if (daemonReset.skipped) out(`[wigolo doctor] --fix: daemon reset skipped — ${daemonReset.error}`);
+        else error = `daemon reset failed: ${daemonReset.error}`;
       }
       const after = getBreakerSnapshot().some((b) => b.state !== 'closed') ? 'failed' : 'ok';
       fixes.push({ name: 'breakers', action: 'resetBreakers()', before: 'failed', after, ok: after === 'ok', error });

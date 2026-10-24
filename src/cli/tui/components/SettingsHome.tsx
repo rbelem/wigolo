@@ -18,7 +18,7 @@ import { Box, Text, useInput } from 'ink';
 import { semantic } from '../theme/palette.js';
 import type { CategoryDef, CategoryId } from '../schema/types.js';
 import type { SettingsStore } from '../state/settings-store.js';
-import { getConfig } from '../../../config.js';
+import { getConfig, normalizeRerankerMode } from '../../../config.js';
 import { rerankerModeSpec } from '../../../search/rerank-mode.js';
 
 export type SettingsHomeAction =
@@ -80,12 +80,15 @@ function categoryPreview(
   // reads as that mode instead of the schema default.
   if (category.id === 'search') {
     const stored = current['reranker'];
-    const mode =
+    const raw =
       process.env.WIGOLO_RERANKER === undefined &&
       typeof stored === 'string' &&
       stored.length > 0
         ? stored
         : getConfig().reranker;
+    // Normalise first: a persisted `flashrank` alias or a typo is resolved to
+    // the mode the runtime will actually run, instead of being printed raw.
+    const mode = normalizeRerankerMode(raw).mode;
     return { text: rerankerModeSpec(mode)?.label ?? mode };
   }
   // Multiselect fields: show installed count or a warning when empty.

@@ -98,6 +98,7 @@ A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto`
 | `WIGOLO_RERANK_API_BASE` | unset | `remote` service base URL; Wigolo sends `POST <base>/rerank`. Required for `remote`. |
 | `WIGOLO_RERANK_API_KEY` | unset | Optional Bearer token for the `remote` endpoint. Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain; never persisted in `config.json`. |
 | `WIGOLO_RERANKER_REQUEST_TIMEOUT_MS` | `30000` | Remote request timeout in milliseconds. |
+| `WIGOLO_RERANKER_FOLD_BUDGET_MS` | `8000` | Total time one rerank fold may spend across every query variant. Each variant races the remaining budget; one that loses is abandoned and the scores already gathered are kept. After a timeout, reranking is skipped for 60s. |
 | `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the ranking model's ONNX session is released. The session parks ~500 MB of native memory that the JS heap does not own. `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_IDLE_TIMEOUT` | `600000` | Idle ms before the embedding model's ONNX session is released (~300 MB of native memory). `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Embedding model for the semantic cache index and `find_similar`. |

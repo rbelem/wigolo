@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { validateSearchEngine } from '../../../src/plugins/validate.js';
+import { DeepseekEngine } from '../../../src/search/engines/deepseek.js';
 import { createDeepSeekEngine, searchEngine } from '../../../examples/plugin-deepseek-search/index.mjs';
 
 const ENDPOINT = 'https://api.deepseek.com/v1/tools/search';
@@ -25,6 +26,14 @@ function engineWith(fetchImpl: unknown) {
 describe('plugin deepseek search engine', () => {
   it('exports a valid SearchEngine shape', () => {
     expect(validateSearchEngine(searchEngine)).toBe(true);
+  });
+
+  it('does not collide with the core `deepseek` engine name', () => {
+    // wigolo ships a key-gated `deepseek` engine itself. A plugin under the
+    // same name is dropped by the loader and, if it did register, its results
+    // would be indistinguishable from core's.
+    expect(searchEngine.name).toBe('deepseek-tools');
+    expect(searchEngine.name).not.toBe(new DeepseekEngine().name);
   });
 
   it('posts the query and count to the DeepSeek search endpoint', async () => {
@@ -74,7 +83,7 @@ describe('plugin deepseek search engine', () => {
         url: 'https://api-docs.deepseek.com/news/v4',
         snippet: 'Model release summary.',
         relevance_score: 0.75,
-        engine: 'deepseek',
+        engine: 'deepseek-tools',
         published_date: '2026-10-01',
       },
     ]);

@@ -87,6 +87,9 @@ export class WorkersAiRerankProvider implements RerankProvider {
       },
       apiKey: this.apiKey,
       timeoutMs: rerankTimeoutMs(),
+      // One attempt: a timed-out rerank must degrade to composite ordering, not
+      // spend a second full timeout before the search returns.
+      attempts: 1,
       label: 'rerank',
     });
 

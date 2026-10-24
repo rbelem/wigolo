@@ -807,7 +807,10 @@ export function getConfig(): Config {
     rerankApiBase: envStr('WIGOLO_RERANK_API_BASE', null, settings, 'rerankApiBase'),
     rerankApiKey: resolveKeychainSecret('WIGOLO_RERANK_API_KEY', 'rerankApiKey'),
     rerankerBaseUrl: envStr('WIGOLO_RERANKER_BASE_URL', null, settings, 'rerankerBaseUrl'),
-    rerankerApiKey: envStr('WIGOLO_RERANKER_API_KEY', null, settings, 'rerankerApiKey'),
+    // Env or keychain only, matching upstream's rerankApiKey: a bearer token
+    // must not be readable from a hand-edited config.json (the write denylist
+    // in persisted-config never covered reads).
+    rerankerApiKey: resolveKeychainSecret('WIGOLO_RERANKER_API_KEY', 'rerankerApiKey'),
     rerankerMaxLength: envInt('WIGOLO_RERANKER_MAX_LENGTH', 512, settings, 'rerankerMaxLength'),
     rerankerReadyTimeoutMs: envInt('WIGOLO_RERANKER_READY_TIMEOUT_MS', 60_000, settings, 'rerankerReadyTimeoutMs'),
     rerankerRequestTimeoutMs: envInt('WIGOLO_RERANKER_REQUEST_TIMEOUT_MS', 30_000, settings, 'rerankerRequestTimeoutMs'),

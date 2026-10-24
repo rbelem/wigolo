@@ -11,6 +11,18 @@ const MAX_PASSAGE_LENGTH = 500;
 const MIN_PASSAGE_LENGTH = 50;
 const DEFAULT_MAX_HIGHLIGHTS = 10;
 
+// Per-source ceiling on the passages handed to the scorer. This caps the
+// cross-encoder work, not the output: `maxHighlights` still decides how many
+// highlights are returned. A highlight is a citing passage, so the head of a
+// page gets the denser share of the budget (topic statements live there) and
+// the remainder is sampled at even intervals so a fact far down a long page
+// can still win — the final passage is always kept. The budget is 12 scorings
+// per source, and it is unconditional now that hosted rerankers are
+// unreachable from this path: the in-process cross-encoder runs on every fetch
+// and every evidence pass, and a markdown-heavy page yields hundreds of
+// passages to keep at most `maxHighlights`.
+export const MAX_CANDIDATE_PASSAGES_PER_SOURCE = 12;
+
 export interface HighlightSynthesisResult {
   highlights: Highlight[];
   citations: Citation[];
@@ -106,6 +118,23 @@ export function mapPassageHeadings(
   });
 }
 
+// Bound one source's passages to `cap` before they reach the scorer: keep the
+// first half of the budget, then sample the rest at even intervals across the
+// remaining passages so the tail is represented and the last passage always
+// survives. Returns the input untouched when it already fits.
+function capCandidates<T>(passages: T[], cap: number = MAX_CANDIDATE_PASSAGES_PER_SOURCE): T[] {
+  if (passages.length <= cap) return passages;
+  const headKeep = Math.ceil(cap / 2);
+  const tailSlots = cap - headKeep;
+  const picked = passages.slice(0, headKeep);
+  if (tailSlots <= 0) return picked;
+  const rest = passages.length - headKeep;
+  for (let slot = 0; slot < tailSlots; slot++) {
+    picked.push(passages[headKeep + Math.round(((slot + 1) * (rest - 1)) / tailSlots)]);
+  }
+  return picked;
+}
+
 // Score passages across all results and return the top N using the
 // cross-encoder rerank provider, with a graceful first-paragraph fallback
 // when reranking is disabled or fails. Each Highlight carries a
@@ -129,7 +158,7 @@ export async function extractHighlights(
 
     const source = r.markdown_content ?? r.snippet ?? '';
     const passages = splitIntoPassages(source);
-    const annotated = mapPassageHeadings(source, passages);
+    const annotated = capCandidates(mapPassageHeadings(source, passages));
     for (const p of annotated) {
       candidates.push({
         text: p.text,
@@ -153,7 +182,8 @@ export async function extractHighlights(
 
   // LOCAL MODES ONLY. This function runs on every successful fetch
   // (`tools/fetch.ts`) and on the default search's evidence pass
-  // (`search/evidence.ts`), with no candidate cap and no time budget of its own.
+  // (`search/evidence.ts`), with no time budget of its own (candidate count is
+  // bounded per source by MAX_CANDIDATE_PASSAGES_PER_SOURCE).
   // Pointing it at a hosted reranker therefore shipped every paragraph of every
   // fetched page to a remote endpoint — and the Decision adapter splits the
   // batch into sequential calls, so one hung endpoint cost ~30s per fetch.

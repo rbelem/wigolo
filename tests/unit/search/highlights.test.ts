@@ -19,9 +19,8 @@ vi.mock('../../../src/config.js', () => ({
 
 const { getConfig } = await import('../../../src/config.js');
 const { getRerankProvider } = await import('../../../src/providers/rerank-provider.js');
-const { extractHighlights, fallbackHighlights, splitIntoPassages } = await import(
-  '../../../src/search/highlights.js'
-);
+const { extractHighlights, fallbackHighlights, splitIntoPassages, MAX_CANDIDATE_PASSAGES_PER_SOURCE } =
+  await import('../../../src/search/highlights.js');
 
 const results: SearchResultItem[] = [
   {
@@ -101,6 +100,102 @@ describe('fallbackHighlights', () => {
     const h = fallbackHighlights(sparse, 5);
     expect(h).toHaveLength(1);
     expect(h[0].text).toBe('only snippet available');
+  });
+});
+
+describe('extractHighlights candidate cap', () => {
+  const para = (n: number) =>
+    `Paragraph ${n} covers the topic with enough substance to clear the minimum passage-length threshold.`;
+
+  const page = (count: number, lastText: string): SearchResultItem[] => [
+    {
+      title: 'Long page',
+      url: 'https://example.com/long',
+      snippet: 'long page',
+      relevance_score: 0.9,
+      markdown_content: [
+        ...Array.from({ length: count - 1 }, (_, i) => para(i + 1)),
+        lastText,
+      ].join('\n\n'),
+    },
+  ];
+
+  const scoredCandidates = (call = 0) =>
+    rerankMock.mock.calls[call][1] as RerankCandidate[];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rerankMock.mockReset();
+    vi.mocked(getConfig).mockReturnValue({
+      reranker: 'onnx',
+      rerankerModel: 'bge-reranker-v2-m3',
+    } as ReturnType<typeof getConfig>);
+  });
+
+  it('scores at most the per-source cap on a page with many passages', async () => {
+    rerankMock.mockImplementation(async (_q: string, candidates: RerankCandidate[]) =>
+      candidates.map((c, idx) => ({ id: c.id, score: 1 / (idx + 1) })),
+    );
+
+    const out = await extractHighlights('topic', page(80, para(80)), 3);
+
+    expect(scoredCandidates()).toHaveLength(MAX_CANDIDATE_PASSAGES_PER_SOURCE);
+    expect(out.reranker_used).toBe(true);
+    expect(out.highlights.length).toBeGreaterThan(0);
+    expect(out.highlights.length).toBeLessThanOrEqual(3);
+    for (const h of out.highlights) {
+      expect(h.source_index).toBe(1);
+      expect(h.source_span!.end).toBeGreaterThan(h.source_span!.start);
+    }
+  });
+
+  it('keeps the last passage of a long page scoreable and selectable', async () => {
+    // Rule: the head of the budget is taken in order, the remainder is sampled
+    // at even intervals across the rest — the final passage is always kept, so
+    // a unique fact at the very end of a long page can still win.
+    const marker = 'UNIQUE-TAIL-FACT: the migration must run before the schema backfill.';
+    rerankMock.mockImplementation(async (_q: string, candidates: RerankCandidate[]) =>
+      candidates
+        .map((c) => ({ id: c.id, score: c.text.includes('UNIQUE-TAIL-FACT') ? 0.99 : 0.1 }))
+        .sort((a, b) => b.score - a.score),
+    );
+
+    const out = await extractHighlights('topic', page(80, marker), 2);
+
+    const texts = scoredCandidates().map((c) => c.text);
+    expect(texts).toHaveLength(MAX_CANDIDATE_PASSAGES_PER_SOURCE);
+    expect(texts.some((t) => t.includes('UNIQUE-TAIL-FACT'))).toBe(true);
+    expect(texts[texts.length - 1]).toContain('UNIQUE-TAIL-FACT');
+    expect(out.highlights[0].text).toContain('UNIQUE-TAIL-FACT');
+    expect(out.highlights[0].source_index).toBe(1);
+    expect(out.highlights[0].source_span!.start).toBeGreaterThan(0);
+  });
+
+  it('caps per source, not in total', async () => {
+    rerankMock.mockImplementation(async (_q: string, candidates: RerankCandidate[]) =>
+      candidates.map((c, idx) => ({ id: c.id, score: 1 / (idx + 1) })),
+    );
+
+    const many = [...page(60, para(60)), ...page(60, para(60))];
+    many[1] = { ...many[1], url: 'https://example.com/second' };
+    await extractHighlights('topic', many, 5);
+
+    expect(scoredCandidates()).toHaveLength(MAX_CANDIDATE_PASSAGES_PER_SOURCE * 2);
+  });
+
+  it('leaves a page that fits the budget untouched', async () => {
+    rerankMock.mockImplementation(async (_q: string, candidates: RerankCandidate[]) =>
+      candidates.map((c, idx) => ({ id: c.id, score: 1 / (idx + 1) })),
+    );
+
+    const short = page(3, para(3));
+    await extractHighlights('topic', short, 2);
+
+    expect(scoredCandidates().map((c) => c.text)).toEqual([
+      para(1),
+      para(2),
+      para(3),
+    ]);
   });
 });
 

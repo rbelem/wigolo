@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';
+import { isCoreEngineName } from '../search/core/core-engine-names.js';
 import { validatePluginExports } from './validate.js';
 import type { Extractor, SearchEngine } from '../types.js';
 
@@ -168,7 +169,24 @@ export async function loadPlugins(): Promise<PluginLoadResult> {
 
     if (validation.hasSearchEngine) {
       const engine = mod.searchEngine as SearchEngine;
-      if (seenEngineNames.has(engine.name)) {
+      // Core names are reserved: results carry `engine: '<name>'`, and
+      // fusion/quality-tiering/health bookkeeping key off that name, so a
+      // plugin claiming one is indistinguishable from core rather than merely
+      // duplicate. `isCoreEngineName` reads a side-effect-free const list — it
+      // never constructs the core pools (see core-engine-names.ts).
+      if (isCoreEngineName(engine.name)) {
+        log.warn(
+          `plugin ${pluginName}: search engine "${engine.name}" skipped — name is reserved by a core engine`,
+          { plugin: pluginName, engineName: engine.name, reservedBy: 'core' },
+        );
+        // Also an error, not just a warning: `server.ts` reports skipped plugins
+        // from this list, and "your plugin silently did nothing" is exactly what
+        // a user needs told out loud.
+        result.errors.push({
+          pluginName,
+          message: `search engine "${engine.name}" is reserved by a core engine`,
+        });
+      } else if (seenEngineNames.has(engine.name)) {
         log.warn('duplicate search engine name, skipping', {
           plugin: pluginName,
           engineName: engine.name,

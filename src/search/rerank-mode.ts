@@ -22,11 +22,14 @@ export interface RerankerModeSpec {
   /** User-facing name for status/dashboard output. */
   label: string;
   /**
-   * What the adapter's `score` numbers mean. A cross-encoder emits raw logits
-   * centred on 0; a hosted reranker emits a relevance probability in [0,1].
-   * The all-junk guard in `search/core/rerank-fold.ts` compares the batch's best
-   * score against the midpoint of the domain, so it has to know which one it is
-   * looking at — the logit floor (< 0) can never fire on a probability.
+   * The scale this MODE normally produces: a cross-encoder emits raw logits
+   * centred on 0, a hosted reranker a relevance probability in [0,1].
+   *
+   * This is a FALLBACK, not the authority. An adapter declares the scale it
+   * actually produces (`RerankProvider.scoreDomain`), because the mode names a
+   * wire protocol and a self-hosted endpoint may answer with logits regardless.
+   * `search/core/rerank-fold.ts` prefers the adapter's declaration, falls back
+   * to this, and finally checks the numbers themselves against the claim.
    */
   scoreDomain: 'logit' | 'probability';
 }

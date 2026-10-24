@@ -9,14 +9,7 @@
 import { createLogger } from '../logger.js';
 import { getConfig } from '../config.js';
 import type { Config } from '../config.js';
-
-/** Modes served by a hosted endpoint rather than an in-process ONNX model. */
-const HOSTED_RERANK_MODES = new Set<Config['reranker']>([
-  'remote',
-  'workers-ai',
-  'decision',
-  'jev',
-]);
+import { rerankerIsHosted } from '../search/rerank-mode.js';
 
 const log = createLogger('providers');
 export interface RerankCandidate {
@@ -123,7 +116,7 @@ export function getRerankProvider(): Promise<RerankProvider> {
 
   // Hosted path: no model is loaded, so there is nothing to warm beyond
   // config validation and no native session to release.
-  if (HOSTED_RERANK_MODES.has(config.reranker)) {
+  if (rerankerIsHosted(config.reranker)) {
     cached = loadHostedRerankProvider(config.reranker)
       .then(async (provider) => {
         await warmupIfSupported(provider);

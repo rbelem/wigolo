@@ -8,6 +8,7 @@ import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from 
 import { checkVenvModule, venvInstallHint } from '../python-env.js';
 import { isProcessAlive } from '../searxng/process.js';
 import { getRerankProvider } from '../providers/rerank-provider.js';
+import { rerankerIsHosted } from '../search/rerank-mode.js';
 import { runCommand } from './tui/run-command.js';
 import type { WarmupReporter } from './tui/reporter.js';
 import { noopReporter } from './tui/reporter.js';
@@ -302,11 +303,11 @@ async function installReranker(
   reporter: WarmupReporter,
 ): Promise<Pick<WarmupResult, 'reranker' | 'rerankerError'>> {
   const mode = getConfig().reranker;
-  if (mode === 'none' || mode === 'custom') {
+  if (mode === 'none') {
     reporter.note('Reranker: skipped (disabled)');
     return {};
   }
-  if (mode === 'remote') {
+  if (rerankerIsHosted(mode)) {
     // The TUI reporter drops success/fail for a step that was never started.
     reporter.start('reranker', 'Checking remote reranker');
     try {

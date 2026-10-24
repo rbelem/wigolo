@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { SearxngProcess } from '../../searxng/process.js';
 import { getRerankProvider } from '../../providers/rerank-provider.js';
+import { rerankerIsHosted } from '../../search/rerank-mode.js';
 import { getConfig } from '../../config.js';
 import { searxngConfigured } from '../../searxng/enabled.js';
 import type { WarmupReporter } from './reporter.js';
@@ -97,11 +98,11 @@ async function runRerankerProbe(
   reporter: WarmupReporter,
 ): Promise<{ state: 'ok' | 'missing'; error?: string }> {
   const mode = getConfig().reranker;
-  if (mode === 'none' || mode === 'custom') {
+  if (mode === 'none') {
     reporter.note('Reranker: disabled');
     return { state: 'ok' };
   }
-  if (mode === 'remote') {
+  if (rerankerIsHosted(mode)) {
     // The TUI reporter drops success/fail for a step that was never started.
     reporter.start('reranker', RERANKER_LABEL);
     try {

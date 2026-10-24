@@ -12,6 +12,7 @@ import { resolveContainerCli } from '../searxng/docker.js';
 import { getConfig } from '../config.js';
 import { RemoteRerankProvider } from '../search/reranker/remote-rerank-provider.js';
 import { RemoteEmbedProvider } from '../embedding/remote-embed-provider.js';
+import { rerankerIsHosted } from '../search/rerank-mode.js';
 import { initDatabase, closeDatabase } from '../cache/db.js';
 import { isNativeAbiMismatch } from '../util/native-abi.js';
 import { getCacheStats } from '../cache/store.js';
@@ -792,7 +793,9 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
     } catch (err) {
       out(`  ML reranker:        ${err instanceof Error ? err.message : String(err)}`);
     }
-  } else if (rerankerMode === 'none' || rerankerMode === 'custom') {
+  } else if (rerankerIsHosted(rerankerMode)) {
+    out(`  ML reranker:        ${rerankerMode} configured (endpoint not probed)`);
+  } else if (rerankerMode === 'none') {
     out('  ML reranker:        disabled');
   } else if (reranker?.installed) {
     out(`  ML reranker:        installed (cross-encoder)`);

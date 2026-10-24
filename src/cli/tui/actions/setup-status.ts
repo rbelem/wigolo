@@ -1,6 +1,8 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { rerankerModeSpec } from '../../../search/rerank-mode.js';
+import { getConfig } from '../../../config.js';
 
 // This project is pure ESM (`"type":"module"`); `require` is not defined at
 // runtime. Use createRequire so the synchronous probe body can lazily load
@@ -93,12 +95,19 @@ export function configReferencesLlmKey(cfg: {
 // probeSetupStatus — injectable deps for unit-testability
 // ---------------------------------------------------------------------------
 
+export type RerankerState = 'ok' | 'degraded' | 'disabled';
+
 export interface ProbeDeps {
   browserInstalled: () => boolean;
   searchBackend: () => 'core' | 'searxng' | 'hybrid';
   searxngReady: () => boolean;
   embeddingsInstalled: () => boolean;
-  rerankerInstalled: () => boolean;
+  /**
+   * Three states, not a boolean: `reranker: 'none'` is a deliberate choice
+   * (renders ○ skipped), while a scoring mode with no model is degraded. A
+   * boolean collapsed both into "degraded — relevance reranking off".
+   */
+  rerankerState: () => RerankerState;
   llmKeyPresent: () => boolean;
   configuredAgents: () => readonly string[];
 }
@@ -122,6 +131,7 @@ export async function probeSetupStatus(
   const backend = deps.searchBackend();
   const agents = deps.configuredAgents();
   const agentsRequested = options.agentsRequested ?? true;
+  const rerankerState = deps.rerankerState();
 
   // core backend needs no native engine; searxng/hybrid degrade (not fail) when engine not ready
   const searchOk = backend === 'core' ? true : deps.searxngReady();
@@ -183,8 +193,14 @@ export async function probeSetupStatus(
       id: 'reranker',
       label: 'ML reranker',
       required: false,
-      status: deps.rerankerInstalled() ? 'ok' : 'degraded',
-      detail: deps.rerankerInstalled() ? undefined : 'relevance reranking off',
+      // `disabled` (`reranker: 'none'`) is deliberate, so it renders ○ skipped
+      // instead of a degraded warning. Hosted modes arrive here as 'ok': they
+      // serve scores from an endpoint and need no on-disk model.
+      status: rerankerState === 'disabled' ? 'skipped' : rerankerState,
+      detail:
+        rerankerState === 'ok' ? undefined
+        : rerankerState === 'disabled' ? 'disabled in config'
+        : 'relevance reranking off',
     },
     {
       id: 'llm',
@@ -261,12 +277,20 @@ export function defaultProbeDeps(): ProbeDeps {
       }
     },
 
-    rerankerInstalled(): boolean {
+    rerankerState(): RerankerState {
       try {
-        const { getConfig } = require('../../../config.js') as typeof import('../../../config.js');
-        return dirNonEmpty(join(getConfig().dataDir, 'transformers'));
+        // Statically imported (not through createRequire) so the probe sees the
+        // same config instance the rest of the process -- and its tests -- reset.
+        const cfg = getConfig();
+        const spec = rerankerModeSpec(cfg.reranker);
+        // A hosted mode has no on-disk model — probing `<dataDir>/transformers`
+        // reported `remote`/`workers-ai`/`decision`/`jev` as degraded. An
+        // unknown mode cannot score, so it stays degraded like before.
+        if (spec?.hosted) return 'ok';
+        if (!spec?.scores) return 'disabled';
+        return dirNonEmpty(join(cfg.dataDir, 'transformers')) ? 'ok' : 'degraded';
       } catch {
-        return false;
+        return 'degraded';
       }
     },
 

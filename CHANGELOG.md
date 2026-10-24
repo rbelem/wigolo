@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Rebased onto upstream v0.3.0, which brings upstream's Cohere-shape reranker in under the name the fork's Workers AI adapter used to hold.
+
+### ⚠️ Breaking
+- **The fork's Workers AI hosted reranker is now `WIGOLO_RERANKER=workers-ai`, not `remote`.** `remote` is upstream's Cohere-shape adapter, configured with `WIGOLO_RERANK_API_BASE` / `WIGOLO_RERANK_API_KEY`. A config that still says `WIGOLO_RERANKER=remote` with `WIGOLO_RERANKER_BASE_URL` should either switch the mode to `workers-ai` (same `_BASE_URL` / `_API_KEY` variables) or keep `remote` and move the endpoint to `WIGOLO_RERANK_API_BASE` / `WIGOLO_RERANK_API_KEY`.
+- The `custom` reranker mode is removed. It was a documented no-op that fell through to passthrough; use `none` to skip reranking.
+
+### Changed
+- Rebased onto upstream v0.3.0 (Node 22+, remote reranking, hardened SSRF protection, OpenAlex/DBLP/OpenReview). The fork keeps its Workers AI adapter alongside upstream's `remote` under the mode name `workers-ai`.
+
 ## v0.3.0 — 2026-10-21
 
 Node 26 support, a large batch of contributor fixes, remote reranking, three keyless academic search engines, and hardened SSRF protection.

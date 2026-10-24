@@ -166,7 +166,7 @@ describe('fresh-machine setup round-trip', () => {
         searchBackend: () => 'core' as const,
         searxngReady: () => false,
         embeddingsInstalled: () => false,
-        rerankerInstalled: () => false,
+        rerankerState: () => 'degraded' as const,
         llmKeyPresent: () => false,
         configuredAgents: () => [] as string[],
       };
@@ -194,7 +194,7 @@ describe('fresh-machine setup round-trip', () => {
         searchBackend: () => 'core' as const,
         searxngReady: () => false,
         embeddingsInstalled: () => false,
-        rerankerInstalled: () => false,
+        rerankerState: () => 'degraded' as const,
         llmKeyPresent: () => false,
         configuredAgents: () => [] as string[],
       };
@@ -225,7 +225,7 @@ describe('fresh-machine setup round-trip', () => {
         searchBackend: () => 'core' as const,
         searxngReady: () => false,
         embeddingsInstalled: () => false,
-        rerankerInstalled: () => false,
+        rerankerState: () => 'degraded' as const,
         llmKeyPresent: () => false,
         configuredAgents: () => [] as string[], // requested but none registered
       };

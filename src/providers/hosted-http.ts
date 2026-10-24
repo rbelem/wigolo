@@ -36,6 +36,57 @@ export interface HostedJsonRequest {
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const ERROR_EXCERPT_CHARS = 300;
 
+/** A key sent to this machine never crosses a network, so plain http is fine there. */
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+}
+
+/**
+ * Validate a user-configured hosted endpoint before a single byte is sent.
+ *
+ * The rules are the ones the Cohere `remote` reranker already enforces, and
+ * they exist because `postJsonCapped` puts `apiKey` on the wire verbatim:
+ *
+ *  - http(s) only, so `file:`/`gopher:`/a typo cannot become a request;
+ *  - no embedded credentials, query or fragment, because the URL is logged at
+ *    warmup — an inline token would leak into `debug`/`info` output;
+ *  - a keyed endpoint must be HTTPS unless it is loopback, otherwise the key
+ *    travels in cleartext to a remote host.
+ *
+ * `missingHint` is the caller's actionable message for "not configured at all",
+ * so each provider keeps its own env-var name and example in the error.
+ * Returns the URL with trailing slashes trimmed, ready to be used as a base.
+ */
+export function assertHostedUrl(
+  rawUrl: string | null | undefined,
+  label: string,
+  apiKey: string | null,
+  missingHint: string,
+): string {
+  const trimmed = (rawUrl ?? '').trim();
+  if (!trimmed) throw new Error(missingHint);
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`${label} must be an http(s) URL`);
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(`${label} must be an http(s) URL without credentials, query, or fragment`);
+  }
+  if (apiKey && parsed.protocol !== 'https:' && !isLoopbackHost(parsed.hostname)) {
+    throw new Error(`${label} carries an API key, so it requires HTTPS unless the endpoint is on loopback`);
+  }
+  return trimmed.replace(/\/+$/, '');
+}
+
 export async function postJsonCapped<T>(req: HostedJsonRequest): Promise<T> {
   const maxBytes = req.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   // One retry by default: these are read-only computations, so retrying is

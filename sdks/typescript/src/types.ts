@@ -157,6 +157,8 @@ export interface CacheRequest {
   since?: string;
   clear?: boolean;
   stats?: boolean;
+  compact?: boolean;
+  vacuum?: boolean;
   check_changes?: boolean;
   mode?: string;
   limit?: number;

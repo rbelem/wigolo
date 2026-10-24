@@ -38,7 +38,7 @@
  * shape throws with the observed keys rather than scoring everything 0.
  */
 import type { RerankCandidate, RerankProvider, RerankResult } from '../../providers/rerank-provider.js';
-import { postJsonCapped } from '../../providers/hosted-http.js';
+import { assertHostedUrl, postJsonCapped } from '../../providers/hosted-http.js';
 import { getConfig } from '../../config.js';
 import { createLogger } from '../../logger.js';
 
@@ -91,24 +91,29 @@ const RELEVANCE_BUCKETS = [
 
 export class DecisionRerankProvider implements RerankProvider {
   readonly modelId: string;
-  private readonly baseUrl: string;
+  private baseUrl: string;
+  private readonly rawBaseUrl: string | null;
   private readonly apiKey: string | null;
+  private validated = false;
 
   constructor() {
     const cfg = getConfig();
     this.modelId = cfg.rerankerModel;
+    this.rawBaseUrl = cfg.rerankerBaseUrl;
     this.baseUrl = (cfg.rerankerBaseUrl ?? '').replace(/\/+$/, '');
     this.apiKey = cfg.rerankerApiKey;
   }
 
   async warmup(): Promise<void> {
-    if (!this.baseUrl) {
-      throw new Error(
-        'WIGOLO_RERANKER=decision needs WIGOLO_RERANKER_BASE_URL. Examples: ' +
-          'https://opencode.ai/inference/systemone/v1/systemone (OpenCode Zen / Jev), ' +
-          'a Cloudflare Workers AI Clef endpoint, or a self-hosted Kev/Ollaya URL.',
-      );
-    }
+    this.baseUrl = assertHostedUrl(
+      this.rawBaseUrl,
+      'WIGOLO_RERANKER_BASE_URL (WIGOLO_RERANKER=decision)',
+      this.apiKey,
+      'WIGOLO_RERANKER=decision needs WIGOLO_RERANKER_BASE_URL. Examples: ' +
+        'https://opencode.ai/inference/systemone/v1/systemone (OpenCode Zen / Jev), ' +
+        'a Cloudflare Workers AI Clef endpoint, or a self-hosted Kev/Ollaya URL.',
+    );
+    this.validated = true;
     if (!this.apiKey) {
       // Self-hosted Kev/Ollaya commonly run unauthenticated; do not reject.
       log.debug('decision reranker has no API key — assuming an unauthenticated self-host');
@@ -127,7 +132,7 @@ export class DecisionRerankProvider implements RerankProvider {
     topK = candidates.length,
   ): Promise<RerankResult[]> {
     if (candidates.length === 0) return [];
-    if (!this.baseUrl) await this.warmup();
+    if (!this.validated) await this.warmup();
 
     // Bound each call by BOTH candidate count and state size. `state` is one
     // string, so an unbounded batch either blows a small self-hosted model's

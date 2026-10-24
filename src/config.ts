@@ -622,6 +622,20 @@ const TLS_BROWSER_PATTERN = /^(chrome|firefox|safari|edge|opera)_\d+$/;
  */
 const VECTOR_INDEX_DIM = 384;
 
+/**
+ * The reranker modes config will accept. Kept next to the union it mirrors:
+ * `reranker-mode.ts` cannot be imported here (it imports this module), and a
+ * value outside this set has no provider to serve it.
+ */
+const RERANKER_MODES = new Set<Config['reranker']>([
+  'onnx',
+  'none',
+  'remote',
+  'workers-ai',
+  'decision',
+  'jev',
+]);
+
 export function validateTlsBrowser(raw: string | null | undefined, fallback: string): string {
   if (!raw) return fallback;
   if (TLS_BROWSER_PATTERN.test(raw)) return raw;
@@ -776,6 +790,17 @@ export function getConfig(): Config {
       // mode and would SILENTLY disable reranking.
       if (raw === 'true') return 'onnx';
       if (raw === 'false') return 'none';
+      // Anything else that is not a real mode (a typo, or the removed 'custom')
+      // used to be cast straight into the union: it then scored as "reranking
+      // is on" in the gates while every provider fell through to passthrough —
+      // silent, and undiagnosable from the outside. Say so and disable instead.
+      if (!RERANKER_MODES.has(raw as Config['reranker'])) {
+        process.stderr.write(
+          `[wigolo] WIGOLO_RERANKER=${raw} is not a reranker mode ` +
+          `(${[...RERANKER_MODES].join(', ')}); reranking disabled (none).\n`,
+        );
+        return 'none';
+      }
       return raw as Config['reranker'];
     })(),
     rerankerModel: envStr('WIGOLO_RERANKER_MODEL', 'bge-reranker-v2-m3', settings, 'rerankerModel') ?? 'bge-reranker-v2-m3',

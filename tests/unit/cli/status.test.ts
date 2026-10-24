@@ -27,6 +27,7 @@ vi.mock('../../../src/config.js', () => ({
 }));
 
 import { runStatus } from '../../../src/cli/status.js';
+import { probePythonPackages } from '../../../src/cli/tui/status-python.js';
 
 beforeEach(() => {
   bootstrapStateMock.mockReset();
@@ -93,6 +94,29 @@ describe('runStatus', () => {
 
     const out = chunks.join('');
     expect(out).toContain('✗ Search engine: failed');
+  });
+
+  it('reports a hosted reranker as configured, never "not installed"', async () => {
+    // The probe classifies hosted modes itself (they need no on-disk model);
+    // status must pass that state through to both the human block and --json
+    // instead of collapsing it into ok/missing.
+    vi.mocked(probePythonPackages).mockReturnValueOnce({ reranker: 'hosted', embeddings: 'ok' });
+
+    const chunks: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr.write as unknown) = ((s: string | Uint8Array) => {
+      chunks.push(typeof s === 'string' ? s : Buffer.from(s).toString('utf-8'));
+      return true;
+    });
+    try {
+      await runStatus([]);
+    } finally {
+      (process.stderr.write as unknown) = orig;
+    }
+
+    const out = chunks.join('');
+    expect(out).toContain('✓ ML reranker configured (hosted)');
+    expect(out).not.toContain('ML reranker not installed');
   });
 
   it('--json emits a machine-readable object on STDOUT (human text stays on stderr)', async () => {

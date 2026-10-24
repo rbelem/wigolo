@@ -8,27 +8,53 @@ function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(hostname);
 }
 
+/**
+ * Resolve and validate `WIGOLO_RERANK_API_BASE` into the `/rerank` URL.
+ *
+ * Split out of the constructor so each rule reads as one decision, and so the
+ * migration case (a carry-over Workers AI config) can be named on its own.
+ */
+function resolveRerankUrl(config: Config): string {
+  const base = config.rerankApiBase?.trim().replace(/\/+$/, '');
+  if (!base) throw new Error(missingBaseMessage(config));
+  let parsed: URL;
+  try {
+    parsed = new URL(base);
+  } catch {
+    throw new Error('WIGOLO_RERANK_API_BASE must be an http(s) URL');
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error('WIGOLO_RERANK_API_BASE must be an http(s) URL without credentials, query, or fragment');
+  }
+  if (config.rerankApiKey && parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
+    throw new Error('WIGOLO_RERANK_API_KEY requires HTTPS unless the endpoint is on loopback');
+  }
+  return `${base}/rerank`;
+}
+
+/**
+ * The fork spelled its Workers AI reranker `remote` before the rebase onto
+ * upstream v0.3.0. Say so instead of the bare "requires WIGOLO_RERANK_API_BASE":
+ * otherwise a carry-over config looks like a missing setting and search quietly
+ * falls back to passthrough.
+ */
+function missingBaseMessage(config: Config): string {
+  if (!config.rerankerBaseUrl) return 'Remote reranker requires WIGOLO_RERANK_API_BASE';
+  return (
+    'WIGOLO_RERANKER=remote now means the Cohere-shape endpoint and reads ' +
+    'WIGOLO_RERANK_API_BASE. Your WIGOLO_RERANKER_BASE_URL is the Workers AI ' +
+    'adapter: set WIGOLO_RERANKER=workers-ai to keep it, or point ' +
+    'WIGOLO_RERANK_API_BASE at a Cohere /rerank service.'
+  );
+}
+
 /** Cohere-style POST /rerank adapter for a configured model service. */
 export class RemoteRerankProvider implements RerankProvider {
   readonly modelId: string;
   private readonly url: string;
 
   constructor(private readonly config: Config) {
-    const base = config.rerankApiBase?.trim().replace(/\/+$/, '');
-    if (!base) throw new Error('Remote reranker requires WIGOLO_RERANK_API_BASE');
-    let parsed: URL;
-    try {
-      parsed = new URL(base);
-    } catch {
-      throw new Error('WIGOLO_RERANK_API_BASE must be an http(s) URL');
-    }
-    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error('WIGOLO_RERANK_API_BASE must be an http(s) URL without credentials, query, or fragment');
-    }
-    if (config.rerankApiKey && parsed.protocol !== 'https:' && !isLoopback(parsed.hostname)) {
-      throw new Error('WIGOLO_RERANK_API_KEY requires HTTPS unless the endpoint is on loopback');
-    }
-    this.url = `${base}/rerank`;
+    this.url = resolveRerankUrl(config);
     this.modelId = config.rerankerModel;
   }
 

@@ -412,9 +412,9 @@ Top environment variables. All optional — defaults are safe.
 | `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list: `chromium,firefox,webkit` |
 | `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build to launch: `chromium` (bundled) \| `auto`/`chrome` (an installed build, Flatpak included, bundled as fallback) |
 | `WIGOLO_CHROME_PATH` | unset | Absolute path to a Chromium binary to use instead of the bundled engine |
-| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` \| `remote` \| `decision` (`jev` alias) \| `none` |
-| `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker endpoint (Workers AI, or any Jev-API-compatible decision model) |
-| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker (optional for self-hosts) |
+| `WIGOLO_RERANKER` | `onnx` | Result reranking: `onnx` \| `remote` (Cohere-shape endpoint) \| `workers-ai` (Cloudflare Workers AI) \| `decision` (`jev` alias) \| `none` |
+| `WIGOLO_RERANKER_BASE_URL` | unset | Hosted reranker endpoint for `workers-ai` (Workers AI, `.../ai/run/@cf/baai/bge-reranker-base`) and `decision` (any Jev-API-compatible decision model); `remote` uses `WIGOLO_RERANK_API_BASE` |
+| `WIGOLO_RERANKER_API_KEY` | unset | Bearer token for the hosted reranker (`workers-ai`, `decision`; optional for self-hosts). `remote` uses `WIGOLO_RERANK_API_KEY` |
 | `WIGOLO_RERANKER_MODEL` | `bge-reranker-v2-m3` | Reranker model id (e.g. `jev-1.13`) |
 | `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the rerank model is released (~500 MB native) |
 | `WIGOLO_EMBEDDING_PROVIDER` | `local` | `local` (in-process, ~290 MB) \| `openai-compatible` (hosted) |

@@ -341,10 +341,10 @@ describe('config', () => {
       expect(getConfig().relevanceThreshold).toBe(0);
     });
 
-    it('reads WIGOLO_RERANKER value custom', () => {
+    it('falls back to none for a mode that no longer exists, and says why', () => {
       process.env.WIGOLO_RERANKER = 'custom';
       resetConfig();
-      expect(getConfig().reranker).toBe('custom');
+      expect(getConfig().reranker).toBe('none');
     });
   });
 

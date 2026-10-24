@@ -21,7 +21,7 @@
  * switch. Re-derive them before trusting `relevance_score` or tier-1 results.
  */
 import type { RerankCandidate, RerankProvider, RerankResult } from '../../providers/rerank-provider.js';
-import { postJsonCapped } from '../../providers/hosted-http.js';
+import { assertHostedUrl, postJsonCapped } from '../../providers/hosted-http.js';
 import { getConfig } from '../../config.js';
 import { createLogger } from '../../logger.js';
 
@@ -38,24 +38,36 @@ interface RerankResponse {
 
 export class WorkersAiRerankProvider implements RerankProvider {
   readonly modelId: string;
-  private readonly baseUrl: string;
+  private baseUrl: string;
+  private readonly rawBaseUrl: string | null;
   private readonly apiKey: string | null;
+  private validated = false;
 
   constructor() {
     const cfg = getConfig();
-    this.modelId = cfg.rerankerBaseUrl ?? 'workers-ai-reranker';
+    // Never the base URL: it carries the account id, and this value is
+    // printed by warmup/verify/doctor.
+    this.modelId = cfg.rerankerModel;
+    this.rawBaseUrl = cfg.rerankerBaseUrl;
     this.baseUrl = (cfg.rerankerBaseUrl ?? '').replace(/\/+$/, '');
     this.apiKey = cfg.rerankerApiKey;
   }
 
   async warmup(): Promise<void> {
-    if (!this.baseUrl) {
-      throw new Error(
-        'WIGOLO_RERANKER=workers-ai requires WIGOLO_RERANKER_BASE_URL (e.g. ' +
-          'https://api.cloudflare.com/client/v4/accounts/<id>/ai/run/@cf/baai/bge-reranker-base)',
-      );
-    }
-    log.info('rerank provider ready', { provider: 'rerank', impl: 'remote', baseUrl: this.baseUrl });
+    this.baseUrl = assertHostedUrl(
+      this.rawBaseUrl,
+      'WIGOLO_RERANKER_BASE_URL (WIGOLO_RERANKER=workers-ai)',
+      this.apiKey,
+      'WIGOLO_RERANKER=workers-ai requires WIGOLO_RERANKER_BASE_URL (e.g. ' +
+        'https://api.cloudflare.com/client/v4/accounts/<id>/ai/run/@cf/baai/bge-reranker-base)',
+    );
+    this.validated = true;
+    log.info('rerank provider ready', { provider: 'rerank', impl: 'workers-ai', baseUrl: this.baseUrl });
+  }
+
+  /** Validate once, lazily: the factory warms up, but `rerank` must too. */
+  private async ready(): Promise<void> {
+    if (!this.validated) await this.warmup();
   }
 
   async rerank(
@@ -64,7 +76,7 @@ export class WorkersAiRerankProvider implements RerankProvider {
     topK = candidates.length,
   ): Promise<RerankResult[]> {
     if (candidates.length === 0) return [];
-    if (!this.baseUrl) await this.warmup();
+    await this.ready();
 
     const payload = await postJsonCapped<RerankResponse>({
       url: this.baseUrl,
@@ -113,8 +125,9 @@ function interpret(payload: RerankResponse, candidates: RerankCandidate[]): Rera
     const idx = r.id ?? r.index;
     const score = r.score ?? r.relevance_score;
     if (typeof score !== 'number') continue;
-    // `id` is the index into the contexts we sent. Fall back to position when
-    // the host omits it.
+    // `id` is the index into the contexts we sent. A row without a numeric id
+    // is skipped rather than guessed: assigning it a position would score the
+    // wrong document and silently reorder results.
     const candidate = typeof idx === 'number' ? candidates[idx] : undefined;
     if (!candidate) continue;
     out.push({ id: candidate.id, score });

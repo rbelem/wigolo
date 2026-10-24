@@ -2,9 +2,9 @@
  * Rerank provider interface.
  *
  * The default factory returns TransformersRerankProvider
- * (Transformers.js cross-encoder, in-process ONNX runtime). The legacy
- * Python FlashRank adapter still exists in `search/reranker/legacy-provider.ts`
- * but it is no longer wired in.
+ * (Transformers.js cross-encoder, in-process ONNX runtime). Hosted modes are
+ * dispatched by `getRerankProvider` below; the old Python FlashRank adapter is
+ * gone, and `WIGOLO_RERANKER=flashrank` is accepted only as an alias for onnx.
  */
 import { createLogger } from '../logger.js';
 import { getConfig } from '../config.js';

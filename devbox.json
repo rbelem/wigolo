@@ -7,14 +7,20 @@
   },
   "shell": {
     "init_hook": [
-      "# devbox's own package farm drops glib's and dbus's /lib — the two the browser needs most — so the libs come from a buildEnv in devbox.d/playwright-libs.",
-      "export LD_LIBRARY_PATH=\"$(nix build --no-link --print-out-paths ./devbox.d/playwright-libs)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\""
+      "# NixOS has no /usr/lib, so Playwright's bundled Chromium cannot find its",
+      "# runtime libraries. devbox's own package farm drops glib's and dbus's",
+      "# /lib — the two it needs most — so the set comes from a buildEnv in",
+      "# devbox.d/playwright-libs. Guarded: the flake only defines x86_64-linux,",
+      "# and pointing LD_LIBRARY_PATH at it elsewhere would poison every child.",
+      "if [ \"$(uname -sm)\" = \"Linux x86_64\" ]; then",
+      "  export LD_LIBRARY_PATH=\"$(nix build --out-link .devbox/gc/playwright-libs --print-out-paths ./devbox.d/playwright-libs)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}\"",
+      "fi"
     ],
     "scripts": {
-      "test": "npm run build && bash scripts/test-hermetic.sh run",
-      "test:unit": "bash scripts/test-hermetic.sh run tests/unit",
-      "test:integration": "npm run build && bash scripts/test-hermetic.sh run tests/integration",
-      "test:e2e": "npm run build && bash scripts/test-hermetic.sh run tests/e2e",
+      "test": "node scripts/check-native.mjs || npm rebuild better-sqlite3; npm run build && npx vitest run",
+      "test:unit": "node scripts/check-native.mjs || npm rebuild better-sqlite3; npx vitest run tests/unit",
+      "test:integration": "node scripts/check-native.mjs || npm rebuild better-sqlite3; npm run build && npx vitest run tests/integration",
+      "test:e2e": "node scripts/check-native.mjs || npm rebuild better-sqlite3; npm run build && npx vitest run tests/e2e",
       "lint": "tsc --noEmit",
       "build": "npm run build"
     }

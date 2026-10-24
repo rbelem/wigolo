@@ -168,6 +168,76 @@ describe('doctor — fresh-install lazy contract', () => {
   });
 });
 
+describe('doctor — hosted reranker config validation (no network)', () => {
+  // WHY: workers-ai / decision / jev read WIGOLO_RERANKER_BASE_URL, and doctor
+  // used to print "<mode> configured (endpoint not probed)" for all of them
+  // without looking. A mode with no URL then passed diagnosis and only failed
+  // at the first search — the exact thing doctor exists to prevent.
+  const savedBase = process.env.WIGOLO_RERANKER_BASE_URL;
+  const savedKey = process.env.WIGOLO_RERANKER_API_KEY;
+
+  beforeEach(() => {
+    delete process.env.WIGOLO_RERANKER_BASE_URL;
+    delete process.env.WIGOLO_RERANKER_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedBase === undefined) delete process.env.WIGOLO_RERANKER_BASE_URL;
+    else process.env.WIGOLO_RERANKER_BASE_URL = savedBase;
+    if (savedKey === undefined) delete process.env.WIGOLO_RERANKER_API_KEY;
+    else process.env.WIGOLO_RERANKER_API_KEY = savedKey;
+    resetConfig();
+  });
+
+  it('surfaces a missing base URL for workers-ai instead of "configured"', async () => {
+    process.env.WIGOLO_RERANKER = 'workers-ai';
+    resetConfig();
+    mockFreshInstall();
+    await runDoctor('/tmp/.wigolo-workers');
+    expect(outBuffer).toMatch(/ML reranker:\s+WIGOLO_RERANKER=workers-ai requires WIGOLO_RERANKER_BASE_URL/);
+    expect(outBuffer).not.toMatch(/ML reranker:\s+workers-ai configured/);
+  });
+
+  it('surfaces a missing base URL for decision', async () => {
+    process.env.WIGOLO_RERANKER = 'decision';
+    resetConfig();
+    mockFreshInstall();
+    await runDoctor('/tmp/.wigolo-decision');
+    expect(outBuffer).toMatch(/ML reranker:\s+WIGOLO_RERANKER=decision needs WIGOLO_RERANKER_BASE_URL/);
+    expect(outBuffer).not.toMatch(/ML reranker:\s+decision configured/);
+  });
+
+  it('surfaces a non-http base URL instead of "configured"', async () => {
+    process.env.WIGOLO_RERANKER = 'decision';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'ftp://example.test/v1';
+    resetConfig();
+    mockFreshInstall();
+    await runDoctor('/tmp/.wigolo-bad-proto');
+    expect(outBuffer).toMatch(/ML reranker:\s+WIGOLO_RERANKER_BASE_URL must be an http\(s\) URL/);
+    expect(outBuffer).not.toMatch(/ML reranker:\s+decision configured/);
+  });
+
+  it('surfaces a base URL with embedded credentials for the jev alias', async () => {
+    process.env.WIGOLO_RERANKER = 'jev';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://user:tok@example.test/v1';
+    resetConfig();
+    mockFreshInstall();
+    await runDoctor('/tmp/.wigolo-bad-creds');
+    expect(outBuffer).toMatch(/ML reranker:\s+.*without credentials, query, or fragment/);
+    expect(outBuffer).not.toMatch(/ML reranker:\s+jev configured/);
+  });
+
+  it('still reports a valid base URL as configured, without probing', async () => {
+    process.env.WIGOLO_RERANKER = 'workers-ai';
+    process.env.WIGOLO_RERANKER_BASE_URL = 'https://api.cloudflare.com/client/v4/accounts/abc/ai/run/@cf/baai/bge-reranker-base';
+    resetConfig();
+    mockFreshInstall();
+    await runDoctor('/tmp/.wigolo-workers-ok');
+    expect(outBuffer).toMatch(/ML reranker:\s+workers-ai configured \(endpoint not probed\)/);
+    expect(getRerankProviderMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('doctor — POSITIVE: models present are reported installed', () => {
   it('reports BOTH embeddings and reranker installed when their (distinct) cache dirs are populated', async () => {
     // GUARD (spec nit 3): a wrong-dir presence check would pass the fresh-dir

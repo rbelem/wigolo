@@ -151,6 +151,30 @@ describe('OpenAICompatibleEmbedProvider', () => {
     );
   });
 
+  it('refuses to send a key over plain http to a non-loopback host', async () => {
+    use({
+      WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',
+      WIGOLO_EMBEDDING_BASE_URL: 'http://embeddings.example/v1',
+      WIGOLO_EMBEDDING_API_KEY: 'secret',
+      WIGOLO_EMBEDDING_MODEL: 'x',
+    });
+    await expect(new OpenAICompatibleEmbedProvider().embed(['x'])).rejects.toThrow(
+      /requires HTTPS unless the endpoint is on loopback/,
+    );
+  });
+
+  it('rejects a base URL carrying credentials or a query', async () => {
+    use({
+      WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',
+      // Warmup logs the URL, so an inline token would land in the log line.
+      WIGOLO_EMBEDDING_BASE_URL: 'https://user:token@embeddings.example/v1',
+      WIGOLO_EMBEDDING_MODEL: 'x',
+    });
+    await expect(new OpenAICompatibleEmbedProvider().embed(['x'])).rejects.toThrow(
+      /without credentials, query, or fragment/,
+    );
+  });
+
   it('returns no vectors for an empty batch without calling the network', async () => {
     use({
       WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',

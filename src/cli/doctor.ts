@@ -11,6 +11,7 @@ import { isProcessAlive } from '../searxng/process.js';
 import { resolveContainerCli } from '../searxng/docker.js';
 import { getConfig } from '../config.js';
 import { RemoteRerankProvider } from '../search/reranker/remote-rerank-provider.js';
+import { assertHostedUrl } from '../providers/hosted-http.js';
 import { rerankerIsHosted } from '../search/rerank-mode.js';
 import { initDatabase, closeDatabase } from '../cache/db.js';
 import { isNativeAbiMismatch } from '../util/native-abi.js';
@@ -173,6 +174,30 @@ function checkReranker(
     return { installed: true };
   } catch (err) {
     return { installed: false, reason: err instanceof Error ? err.message : 'unknown error' };
+  }
+}
+
+/**
+ * Validate a hosted rerank endpoint without probing it.
+ *
+ * Workers-AI / decision / jev read `WIGOLO_RERANKER_BASE_URL`. Doctor used to
+ * print "configured" for all of them unconditionally, so a mode with no URL —
+ * or one carrying an inline token that warmup rejects — looked healthy and only
+ * failed at the first search. The rules are the providers' (`assertHostedUrl`);
+ * only the "not configured" hint is per-mode, because it is the one line the
+ * operator acts on.
+ */
+function hostedRerankConfigError(mode: string): string | null {
+  const cfg = getConfig();
+  const hint =
+    mode === 'workers-ai'
+      ? 'WIGOLO_RERANKER=workers-ai requires WIGOLO_RERANKER_BASE_URL (e.g. https://api.cloudflare.com/client/v4/accounts/<id>/ai/run/@cf/baai/bge-reranker-base)'
+      : `WIGOLO_RERANKER=${mode} needs WIGOLO_RERANKER_BASE_URL (e.g. https://opencode.ai/inference/systemone/v1/systemone)`;
+  try {
+    assertHostedUrl(cfg.rerankerBaseUrl, 'WIGOLO_RERANKER_BASE_URL', cfg.rerankerApiKey, hint);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -772,7 +797,12 @@ async function runDoctorInner(dataDir: string, opts?: DoctorOptions): Promise<nu
       out(`  ML reranker:        ${err instanceof Error ? err.message : String(err)}`);
     }
   } else if (rerankerIsHosted(rerankerMode)) {
-    out(`  ML reranker:        ${rerankerMode} configured (endpoint not probed)`);
+    // Workers-AI / decision / jev read WIGOLO_RERANKER_BASE_URL. Doctor used to
+    // print "configured" unconditionally here, so a mode with no URL — or one
+    // carrying an inline token that warmup rejects — looked healthy and only
+    // failed at the first search. Same rules as the providers, no probe.
+    const configError = hostedRerankConfigError(rerankerMode);
+    out(`  ML reranker:        ${configError ?? `${rerankerMode} configured (endpoint not probed)`}`);
   } else if (rerankerMode === 'none') {
     out('  ML reranker:        disabled');
   } else if (reranker?.installed) {

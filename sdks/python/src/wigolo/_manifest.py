@@ -148,6 +148,8 @@ MANIFEST: dict[str, ToolSpec] = {
             "since",
             "clear",
             "stats",
+            "compact",
+            "vacuum",
             "check_changes",
             "mode",
             "limit",

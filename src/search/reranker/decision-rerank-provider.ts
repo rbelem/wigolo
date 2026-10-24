@@ -248,7 +248,19 @@ function toScore(answer: unknown): number | null {
     // Same normalisation as expectedBucket(): position over the bucket range.
     // Dividing by length here (the previous form) scored a certain "Relevant"
     // 0.75 while the distribution path scored the same answer 0.667.
-    return clamp01(idx / (RELEVANCE_BUCKETS.length - 1));
+    const position = idx / (RELEVANCE_BUCKETS.length - 1);
+    // A label that also states its confidence is a (choice, probability) pair —
+    // rule 2 in the doc above, which the code used to skip by returning early.
+    // Ignoring it meant {label: 'Highly relevant', probability: 0.01} scored a
+    // full 1.0: a model saying "probably not, but if anything it would be
+    // relevant" outranked everything. Mirrors expectedBucket()'s (idx + p)/n
+    // so the two encodings of the same answer agree.
+    const confidence = rec.probability ?? rec.confidence;
+    if (typeof confidence === 'number' && Number.isFinite(confidence)) {
+      const p = clamp01(confidence);
+      return clamp01((idx + p) / RELEVANCE_BUCKETS.length);
+    }
+    return position;
   }
 
   // A field literally named probability/confidence states its own scale, so it

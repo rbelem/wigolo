@@ -622,6 +622,33 @@ describe('foldRerankIntoOrdering — per-fold time budget', () => {
     expect(out).toHaveLength(2);
   });
 
+  it('abandons a hung variant at the deadline instead of waiting out its timeout', async () => {
+    const seen: string[] = [];
+    const rerank = async (q: string, cands: { id: string; text: string }[]) => {
+      seen.push(q);
+      if (q === 'q2') {
+        // Never resolves: without a deadline the fold would sit on the provider's
+        // own 30s request timeout, and the earlier variant's scores would be lost
+        // to the catch.
+        return new Promise<Map<string, number>>(() => {});
+      }
+      const m = new Map<string, number>();
+      // q1 prefers B; it is the only variant that ever answers.
+      for (const c of cands) m.set(c.id, c.text.startsWith('B') ? 3 : 0);
+      return m;
+    };
+    const started = Date.now();
+    const out = await foldRerankIntoOrdering([r('A', 0.9), r('B', 0.5), r('C', 0.2)], {
+      queries: ['q1', 'q2', 'q3'],
+      rerank,
+      budgetMs: 50,
+    });
+    expect(seen).toEqual(['q1', 'q2']);
+    // Degraded, not discarded: q1 alone lifts B over the composite leader.
+    expect(out.map((x) => x.url)).toEqual(['B', 'A', 'C']);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   it('runs every variant when the budget is ample', async () => {
     const seen: string[] = [];
     const rerank = async (q: string, cands: { id: string; text: string }[]) => {

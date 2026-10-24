@@ -101,6 +101,24 @@ describe('DecisionRerankProvider', () => {
     }
   });
 
+  it('lets the confidence on a chosen label move the score', async () => {
+    // The (label, probability) encoding must not discard the probability: a
+    // model that says "Highly relevant, but only 1% likely" is not scoring the
+    // document as relevant. The old parser returned the bucket position and
+    // ignored `probability`, so 0.01 and 0.99 scored identically.
+    reply = {
+      answers: {
+        r0: { label: 'Highly relevant', probability: 0.99 },
+        r1: { label: 'Highly relevant', probability: 0.01 },
+      },
+    };
+    const out = await new DecisionRerankProvider().rerank('q', candidates.slice(0, 2));
+    const byId = new Map(out.map((r) => [r.id, r.score]));
+    expect(byId.get('alpha')!).toBeGreaterThan(byId.get('beta')!);
+    // (index + p) / count: 3 + 0.01 over 4 buckets, not a full 1.0.
+    expect(byId.get('beta')!).toBeCloseTo((3 + 0.01) / 4, 5);
+  });
+
   it('scores a probability-per-option MAP as an expected bucket', async () => {
     // The shape the docs describe: a probability for EVERY allowed option.
     reply = {

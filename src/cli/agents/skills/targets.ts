@@ -15,6 +15,7 @@ export const SUPPORTED_AGENTS = [
   'codex',
   'cursor',
   'gemini-cli',
+  'opencode',
   'cline',
   'windsurf',
 ] as const;
@@ -70,6 +71,21 @@ const SPECS: Record<SupportedAgent, AgentTargetSpec> = {
     project: (_h, cwd) => ({
       basePath: join(cwd, '.agents', 'skills'),
       relLabel: '.agents/skills',
+    }),
+    global: (h) => ({
+      basePath: join(h, '.agents', 'skills'),
+      relLabel: '~/.agents/skills',
+    }),
+  },
+  opencode: {
+    // OpenCode's native project dir is .opencode/skills. At global scope it
+    // also discovers the shared compatibility tree, which is where wigolo
+    // installs so one pack serves every .agents-aware agent instead of
+    // duplicating the tree.
+    kind: 'skill-dirs',
+    project: (_h, cwd) => ({
+      basePath: join(cwd, '.opencode', 'skills'),
+      relLabel: '.opencode/skills',
     }),
     global: (h) => ({
       basePath: join(h, '.agents', 'skills'),

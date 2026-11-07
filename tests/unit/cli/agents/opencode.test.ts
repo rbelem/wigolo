@@ -269,10 +269,10 @@ describe('opencodeHandler lifecycle', () => {
 });
 
 describe('opencodeHandler metadata', () => {
-  it('is MCP-only', async () => {
+  it('is MCP + shared skills, no commands/instructions', async () => {
     const { opencodeHandler } = await import('../../../../src/cli/agents/opencode.js');
     expect(opencodeHandler.id).toBe('opencode');
-    expect(opencodeHandler.supportsSkills).toBe(false);
+    expect(opencodeHandler.supportsSkills).toBe(true);
     expect(opencodeHandler.supportsCommands).toBe(false);
     expect(opencodeHandler.supportsInstructions).toBe(false);
     await expect(opencodeHandler.installInstructions()).resolves.toBeUndefined();

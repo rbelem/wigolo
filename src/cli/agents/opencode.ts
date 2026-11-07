@@ -331,7 +331,7 @@ async function uninstall(): Promise<{ removed: string[] }> {
 export const opencodeHandler = {
   id: 'opencode' as const,
   displayName: 'OpenCode',
-  supportsSkills: false,
+  supportsSkills: true,
   supportsCommands: false,
   supportsInstructions: false,
   detect,

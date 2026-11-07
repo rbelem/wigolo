@@ -183,6 +183,16 @@ describe('runSkills — agent validation', () => {
     expect(env.actions.some((a) => a.path.includes('.cline/skills'))).toBe(true);
   });
 
+  it('--agent opencode targets the shared ~/.agents/skills tree at global scope', async () => {
+    const code = await runSkills([
+      'add', 'wigolo-search', '--agent', 'opencode', '--global', '--dry-run', '--json',
+    ]);
+    expect(code).toBe(0);
+    const env = jsonEnvelope();
+    expect(env.actions.some((a) => a.agents.includes('opencode'))).toBe(true);
+    expect(env.actions.some((a) => a.path.includes('.agents/skills'))).toBe(true);
+  });
+
   it('supported-but-UNDETECTED agent proceeds when named explicitly', async () => {
     // Nothing detected, but cline explicitly targeted → still plans.
     withDetected([]);
@@ -273,6 +283,14 @@ describe('runSkills — list', () => {
     const code = await runSkills(['list', '--agent', 'zed']);
     expect(code).toBe(0);
     expect(out()).toContain('not supported');
+  });
+
+  it('list --agent <no-skills id> rows only that agent, not every agent', async () => {
+    const code = await runSkills(['list', '--agent', 'zed', '--json']);
+    expect(code).toBe(0);
+    const env = jsonEnvelope();
+    expect(env.actions.map((a) => a.agents[0])).toEqual(['zed']);
+    expect(env.actions[0].status).toBe('not supported');
   });
 
   it('list reflects an installed pack', async () => {

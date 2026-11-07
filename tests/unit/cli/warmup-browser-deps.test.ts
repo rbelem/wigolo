@@ -37,7 +37,7 @@ vi.mock('../../../src/python-env.js', () => ({
 }));
 
 vi.mock('../../../src/config.js', () => ({
-  getConfig: vi.fn(() => ({ dataDir: '/tmp/test-wigolo' })),
+  getConfig: vi.fn(() => ({ dataDir: '/tmp/test-wigolo', browserChannel: 'chromium' })),
 }));
 
 import { chromium } from 'playwright';

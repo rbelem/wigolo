@@ -67,61 +67,103 @@ export async function probeBrowser(
   opts: { launchTimeoutMs?: number; preferInstalled?: boolean } = {},
 ): Promise<BrowserProbeResult> {
   const api = BROWSER_API[name];
+  const timeout = opts.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS;
 
-  const installed =
-    name === 'chromium' && opts.preferInstalled
-      ? getBrowserEngine().resolveAuthenticChromiumPath()
-      : null;
-
-  let execPath = '';
-  let onDisk = false;
-  if (installed) {
-    execPath = installed;
-    onDisk = existsSync(installed);
-  } else {
+  const launchable = async (executablePath: string): Promise<BrowserProbeResult> => {
     try {
-      execPath = api.executablePath();
-      onDisk = !!execPath && existsSync(execPath);
+      const browser = await withTimeout(
+        api.launch({ headless: true, executablePath }),
+        timeout,
+      );
+      try {
+        await browser.close();
+      } catch {
+        // Close failures don't change the result — it launched.
+      }
+      return { onDisk: true, launchable: true, execPath: executablePath, origin: 'installed' };
     } catch (err) {
       return {
-        onDisk: false,
+        onDisk: true,
         launchable: false,
-        execPath: '',
-        origin: 'bundled',
+        execPath: executablePath,
+        origin: 'installed',
         error: err instanceof Error ? err.message : String(err),
       };
     }
-  }
-  const origin: BrowserProbeResult['origin'] = installed ? 'installed' : 'bundled';
+  };
 
-  if (!onDisk) {
+  if (name === 'chromium' && opts.preferInstalled) {
+    // Walk the tier's installed candidates in rank order and report the first
+    // one that actually LAUNCHES. Taking the first that merely exists is the
+    // bug this replaces: /usr/bin/chromium can be present-but-broken (an envfs
+    // name, a dangling link, a build missing OS libs) while the Flatpak behind
+    // it works, and doctor then disagrees with a tier that fetches fine.
+    const candidates = getBrowserEngine().installedCandidates();
+    let firstFailure: string | undefined;
+    let firstOnDisk = false;
+    for (const candidate of candidates) {
+      if (!existsSync(candidate.path)) continue;
+      firstOnDisk = true;
+      const probe = await launchable(candidate.path);
+      if (probe.launchable) return probe;
+      firstFailure ??= probe.error;
+    }
+    // No installed build launched. The plan ends at the bundled engine, so
+    // report THAT: it is what the tier will really use. Only when an installed
+    // candidate was on disk and the bundled one is unusable too do we surface
+    // the installed failure, because it is the actionable one.
+    const bundled = await probeBundled(api, timeout);
+    if (bundled.launchable || !firstOnDisk) return bundled;
+    return {
+      onDisk: true,
+      launchable: false,
+      execPath: candidates[0]?.path ?? '',
+      origin: 'installed',
+      error: firstFailure ?? bundled.error,
+    };
+  }
+
+  const bundled = await probeBundled(api, timeout);
+  return bundled;
+}
+
+/** Probe Playwright's own build (`api.executablePath()`), the same one runtime uses. */
+async function probeBundled(api: BrowserType, timeout: number): Promise<BrowserProbeResult> {
+  let execPath = '';
+  try {
+    execPath = api.executablePath();
+  } catch (err) {
+    return {
+      onDisk: false,
+      launchable: false,
+      execPath: '',
+      origin: 'bundled',
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  if (!execPath || !existsSync(execPath)) {
     return {
       onDisk: false,
       launchable: false,
       execPath,
-      origin,
-      error: installed
-        ? `selected browser missing on disk: ${installed}`
-        : 'browser binary missing on disk',
+      origin: 'bundled',
+      error: 'browser binary missing on disk',
     };
   }
-
-  const timeout = opts.launchTimeoutMs ?? DEFAULT_LAUNCH_TIMEOUT_MS;
   try {
-    const launchOpts = installed ? { headless: true, executablePath: installed } : { headless: true };
-    const browser = await withTimeout(api.launch(launchOpts), timeout);
+    const browser = await withTimeout(api.launch({ headless: true }), timeout);
     try {
       await browser.close();
     } catch {
       // Close failures don't change the result — it launched.
     }
-    return { onDisk: true, launchable: true, execPath, origin };
+    return { onDisk: true, launchable: true, execPath, origin: 'bundled' };
   } catch (err) {
     return {
       onDisk: true,
       launchable: false,
       execPath,
-      origin,
+      origin: 'bundled',
       error: err instanceof Error ? err.message : String(err),
     };
   }

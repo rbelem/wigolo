@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { getConfig, type Config } from '../config.js';
 import { searxngConfigured } from '../searxng/enabled.js';
-import { probeBrowser, type BrowserName } from '../fetch/browser-probe.js';
+import { probeBrowser, type BrowserName, type BrowserProbeResult } from '../fetch/browser-probe.js';
 import { checkPythonAvailable, bootstrapNativeSearxng, getBootstrapState } from '../searxng/bootstrap.js';
 import { checkVenvModule, venvInstallHint } from '../python-env.js';
 import { isProcessAlive } from '../searxng/process.js';
@@ -206,6 +206,9 @@ export async function installBrowser(
 export interface WarmupResult {
   playwright: 'ok' | 'failed';
   playwrightError?: string;
+  /** Where the launchable browser came from: the host, or Playwright's download. */
+  playwrightOrigin?: 'installed' | 'bundled';
+  playwrightPath?: string;
   searxng: 'ready' | 'bootstrapped' | 'failed' | 'no_python' | 'no_venv' | 'skipped';
   searxngError?: string;
   reranker?: 'ok' | 'failed';
@@ -286,17 +289,41 @@ export function wipeSearxngState(dataDir: string, reporter: WarmupReporter = noo
   reporter.note('Wiped search engine state, install, and locks (--force)');
 }
 
-async function installPlaywright(reporter: WarmupReporter): Promise<Pick<WarmupResult, 'playwright' | 'playwrightError'>> {
+async function installPlaywright(reporter: WarmupReporter): Promise<Pick<WarmupResult, 'playwright' | 'playwrightError' | 'playwrightOrigin'>> {
   reporter.start('playwright', 'Installing browser engine (chromium)');
   const r = await installBrowser('chromium');
   if (r.ok) {
     reporter.success('playwright', 'installed');
-    return { playwright: 'ok' };
+    return { playwright: 'ok', playwrightOrigin: 'bundled' };
   }
   const [headline, ...notes] = (r.error ?? 'install failed').split('\n');
   reporter.fail('playwright', headline);
   for (const line of notes) reporter.note(line);
   return { playwright: 'failed', playwrightError: headline };
+}
+
+/**
+ * A browser the host already provides, when the channel allows one. The tier
+ * ranks an installed build above the bundled download (`browserChannel=auto`),
+ * so downloading Playwright's copy first is wasted work at best and, on a host
+ * whose distro libs Playwright's optional engines need are absent, a wall of
+ * red `✖` rows at worst. `browserChannel=chromium` means "bundled only" and is
+ * honoured by returning null.
+ */
+async function detectInstalledBrowser(): Promise<BrowserProbeResult | null> {
+  if (getConfig().browserChannel === 'chromium') return null;
+  const probe = await probeBrowser('chromium', { preferInstalled: true });
+  return probe.launchable && probe.origin === 'installed' ? probe : null;
+}
+
+function reportInstalledBrowser(
+  probe: BrowserProbeResult,
+  reporter: WarmupReporter,
+): Pick<WarmupResult, 'playwright' | 'playwrightOrigin' | 'playwrightPath'> {
+  reporter.start('playwright', 'Detecting browser engine');
+  const path = sanitizeForTerminal(probe.execPath);
+  reporter.success('playwright', `using installed browser at ${path}`);
+  return { playwright: 'ok', playwrightOrigin: 'installed', playwrightPath: probe.execPath };
 }
 
 async function installReranker(
@@ -468,7 +495,13 @@ export async function runWarmup(
 
   reporterImpl.note('Starting wigolo warmup');
 
-  const pwResult = await installPlaywright(reporterImpl);
+  // Prefer a browser the host already provides over a fresh download. Detection
+  // is cheap (one launch probe) and decides both the browser step and whether
+  // the optional extra engines are worth attempting.
+  const installedBrowser = await detectInstalledBrowser();
+  const pwResult = installedBrowser
+    ? reportInstalledBrowser(installedBrowser, reporterImpl)
+    : await installPlaywright(reporterImpl);
 
   // D1: the search-engine sidecar is opt-in. The searxng phase runs only when
   // explicitly requested (`--searxng`), or with `--all` when the sidecar is
@@ -490,13 +523,25 @@ export async function runWarmup(
     rerankerResult = await installReranker(reporterImpl);
   }
 
+  // An installed browser already satisfies the default (Chromium) engine. The
+  // extra engines are only worth downloading when the caller names them, or
+  // when there is no installed browser to rely on. `--all` from init would
+  // otherwise try both on every host and fail on distro-lib-less systems.
+  const skipOptionalEngines =
+    installedBrowser !== null && !flagSet.has('--firefox') && !flagSet.has('--webkit');
+  if (skipOptionalEngines && flagSet.has('--all')) {
+    reporterImpl.note(
+      'Firefox/WebKit: skipped — using the installed browser (pass --firefox / --webkit to download them)',
+    );
+  }
+
   let firefoxResult: Pick<WarmupResult, 'firefox' | 'firefoxError'> = {};
-  if (flagSet.has('--firefox') || flagSet.has('--all')) {
+  if (!skipOptionalEngines && (flagSet.has('--firefox') || flagSet.has('--all'))) {
     firefoxResult = await installFirefox(reporterImpl);
   }
 
   let webkitResult: Pick<WarmupResult, 'webkit' | 'webkitError'> = {};
-  if (flagSet.has('--webkit') || flagSet.has('--all')) {
+  if (!skipOptionalEngines && (flagSet.has('--webkit') || flagSet.has('--all'))) {
     webkitResult = await installWebkit(reporterImpl);
   }
 
@@ -516,7 +561,12 @@ export async function runWarmup(
 
   reporterImpl.note('');
   reporterImpl.note('Summary:');
-  reporterImpl.note(`  Browser:       ${result.playwright}${result.playwrightError ? ` (${result.playwrightError})` : ''}`);
+  const browserNote = result.playwrightError
+    ? ` (${result.playwrightError})`
+    : result.playwrightOrigin === 'installed' && result.playwrightPath
+      ? ` (installed: ${sanitizeForTerminal(result.playwrightPath)})`
+      : '';
+  reporterImpl.note(`  Browser:       ${result.playwright}${browserNote}`);
   reporterImpl.note(`  Search engine: ${result.searxng}${result.searxngError ? ` (${result.searxngError})` : ''}`);
   if (result.reranker) reporterImpl.note(`  ML reranker:   ${result.reranker}${result.rerankerError ? ` (${result.rerankerError})` : ''}`);
   if (result.firefox) reporterImpl.note(`  Firefox:       ${result.firefox}${result.firefoxError ? ` (${result.firefoxError})` : ''}`);

@@ -278,3 +278,67 @@ describe('opencodeHandler metadata', () => {
     await expect(opencodeHandler.installInstructions()).resolves.toBeUndefined();
   });
 });
+
+describe('opencodeHandler symlinked config', () => {
+  // OpenCode reads JSONC, and editors only associate the schema with a `.json`
+  // name, so `opencode.json -> ./opencode.jsonc` is a common setup. The shared
+  // writer refuses symlinks by default; the agent resolves the link first so it
+  // can wire the file the user actually maintains.
+  it.skipIf(process.platform === 'win32')(
+    'writes through a same-directory symlink and keeps the link intact',
+    async () => {
+      const configDir = join(tmpHome, '.config', 'opencode');
+      const realPath = join(configDir, 'opencode.jsonc');
+      const linkPath = join(configDir, 'opencode.json');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(realPath, '{\n  // user JSONC\n  "theme": "opencode",\n}\n');
+      symlinkSync('./opencode.jsonc', linkPath);
+
+      const { syncOpencodeConfig } = await import('../../../../src/cli/agents/opencode.js');
+      const result = await syncOpencodeConfig({
+        command: { command: 'npx', args: ['-y', 'wigolo'] },
+        configPath: linkPath,
+        legacyConfigPath: join(configDir, 'config.json'),
+      });
+
+      expect(result.ok).toBe(true);
+      // The link is untouched; the target file is what gained the entry.
+      expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+      const parsed = parseJsonObject(readFileSync(realPath, 'utf-8'), true);
+      expect(parsed.theme).toBe('opencode');
+      expect(parsed.mcp.wigolo).toEqual({
+        type: 'local',
+        command: ['npx', '-y', 'wigolo'],
+        enabled: true,
+      });
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'still refuses a symlink pointing outside the user home',
+    async () => {
+      const outside = join(tmpdir(), `wigolo-opencode-outside-${Date.now()}.json`);
+      const outsideOriginal = '{"theme":"outside"}\n';
+      writeFileSync(outside, outsideOriginal);
+      const configDir = join(tmpHome, '.config', 'opencode');
+      const linkPath = join(configDir, 'opencode.json');
+      mkdirSync(configDir, { recursive: true });
+      symlinkSync(outside, linkPath);
+
+      try {
+        const { syncOpencodeConfig } = await import('../../../../src/cli/agents/opencode.js');
+        const result = await syncOpencodeConfig({
+          command: { command: 'npx', args: ['-y', 'wigolo'] },
+          configPath: linkPath,
+          legacyConfigPath: join(configDir, 'config.json'),
+        });
+
+        expect(result.ok).toBe(false);
+        expect(result.message).toContain('refused symbolic link');
+        expect(readFileSync(outside, 'utf-8')).toBe(outsideOriginal);
+      } finally {
+        rmSync(outside, { force: true });
+      }
+    },
+  );
+});

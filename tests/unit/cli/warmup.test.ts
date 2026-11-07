@@ -98,7 +98,14 @@ const argsOf = (call: unknown[]): string[] => (call[1] as string[]) ?? [];
 const includesArg = (call: unknown[], needle: string): boolean =>
   argsOf(call).some((a) => String(a).includes(needle));
 
-const coreConfig = { dataDir: '/tmp/test-wigolo', searchBackend: null, searxngUrl: null };
+const coreConfig = {
+  dataDir: '/tmp/test-wigolo',
+  searchBackend: null,
+  searxngUrl: null,
+  // Bundled-only: keeps these tests on the download path regardless of what
+  // browser the host happens to have installed.
+  browserChannel: 'chromium',
+};
 
 describe('runWarmup', () => {
   beforeEach(() => {

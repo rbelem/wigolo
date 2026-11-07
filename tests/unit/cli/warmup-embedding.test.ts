@@ -4,6 +4,7 @@ vi.mock('../../../src/config.js', () => ({
   getConfig: vi.fn().mockReturnValue({
     dataDir: '/tmp/wigolo-test',
     embeddingModel: 'BAAI/bge-small-en-v1.5',
+    browserChannel: 'chromium',
   }),
 }));
 

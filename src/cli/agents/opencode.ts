@@ -1,8 +1,8 @@
 /** OpenCode integration: local MCP config with no separate instructions layer. */
-import { existsSync, promises as fs } from 'node:fs';
+import { constants, existsSync, promises as fs } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { binaryInPath } from '../tui/detect-helpers.js';
 import { removeJsonConfigEntry, writeJsonConfig } from '../tui/config-writer-json.js';
 
@@ -46,6 +46,46 @@ function legacyConfigPath(): string {
 function detect(): boolean {
   if (existsSync(opencodeDir())) return true;
   return binaryInPath('opencode') !== null;
+}
+
+/**
+ * Resolve a config path the user symlinked ON PURPOSE, e.g.
+ * `opencode.json -> ./opencode.jsonc` (OpenCode reads JSONC, and some editors
+ * only associate the schema with a `.json` name). The shared writer refuses
+ * symlinks because a blind write can clobber an arbitrary target; here the link
+ * IS the config the user maintains, so following it is the only way to wire the
+ * agent.
+ *
+ * Follow only a DIRECT symlink whose target:
+ *   - resolves inside the user's home,
+ *   - is a regular file,
+ *   - is writable.
+ * Anything else (a link into the Nix store, /etc, a directory, a dangling link)
+ * is returned unchanged, and the writer's refusal still applies.
+ */
+async function resolveConfigTarget(path: string): Promise<string> {
+  let isLink = false;
+  try {
+    isLink = (await fs.lstat(path)).isSymbolicLink();
+  } catch {
+    return path; // missing: let the writer create it
+  }
+  if (!isLink) return path;
+  let resolved: string;
+  try {
+    resolved = await fs.realpath(path);
+  } catch {
+    return path; // dangling link: the refusal explains it better than ENOENT
+  }
+  const rel = relative(homedir(), resolved);
+  if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) return path;
+  try {
+    if (!(await fs.stat(resolved)).isFile()) return path;
+    await fs.access(resolved, constants.W_OK);
+  } catch {
+    return path;
+  }
+  return resolved;
 }
 
 function buildEntry(command: OpencodeCommand): Record<string, unknown> {
@@ -129,8 +169,13 @@ export async function syncOpencodeConfig(
 ): Promise<SyncOpencodeConfigResult> {
   const { command, dryRun } = options;
   const removed: string[] = [];
-  const targetConfigPath = options.configPath ?? configPath();
-  const targetLegacyConfigPath = options.legacyConfigPath ?? legacyConfigPath();
+  // Follow a user-made same-config symlink (opencode.json -> opencode.jsonc)
+  // before any read/write/backup/rollback, so the whole transaction targets the
+  // real file and the link itself stays untouched.
+  const targetConfigPath = await resolveConfigTarget(options.configPath ?? configPath());
+  const targetLegacyConfigPath = await resolveConfigTarget(
+    options.legacyConfigPath ?? legacyConfigPath(),
+  );
 
   if (command) {
     const legacyFailure = await preflightLegacyRemoval(targetLegacyConfigPath, 'migration');

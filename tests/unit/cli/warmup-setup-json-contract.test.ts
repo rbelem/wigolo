@@ -41,7 +41,7 @@ vi.mock('../../../src/searxng/bootstrap.js', () => ({
 }));
 
 vi.mock('../../../src/config.js', () => ({
-  getConfig: vi.fn(() => ({ dataDir: '/tmp/test-wigolo-warmup', searchBackend: null, searxngUrl: null })),
+  getConfig: vi.fn(() => ({ dataDir: '/tmp/test-wigolo-warmup', searchBackend: null, searxngUrl: null, browserChannel: 'chromium' })),
 }));
 
 // `--all` also warms the reranker and the embedding model. Without these mocks

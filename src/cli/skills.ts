@@ -208,8 +208,8 @@ export async function runSkills(args: string[]): Promise<number> {
   const sub = parsed.sub as Subcommand;
 
   // Validate --agent ids against the skills-capable set. Registered-but-no-skills
-  // ids (vscode/zed/antigravity/opencode) and unknown ids both reject with the
-  // supported list — but only on add/remove. list tolerates them (rows them as
+  // ids (vscode/zed/antigravity) and unknown ids both reject with the supported
+  // list — but only on add/remove. list tolerates them (rows them as
   // "not supported").
   const supportedSet = new Set<string>(SUPPORTED_AGENTS);
   if (parsed.agents.length && sub !== 'list') {
@@ -367,11 +367,17 @@ function runList(parsed: ParsedArgs, scope: Scope): number {
   }
 
   const packs = parsed.packs.length ? parsed.packs : undefined;
-  let entries: ListEntry[];
-  try {
-    entries = listSkills({ packs, scope, agents: agentArg, cwd });
-  } catch (err) {
-    return failExec(err, scope, parsed.json);
+  let entries: ListEntry[] = [];
+  // An --agent set containing only registered-but-no-skills ids resolves to an
+  // empty agentArg. Passing [] to listSkills means "all agents", which would
+  // silently dump every agent instead of just rowing the named one as
+  // unsupported — so skip the engine call in that case.
+  if (!parsed.agents.length || (agentArg && agentArg.length > 0)) {
+    try {
+      entries = listSkills({ packs, scope, agents: agentArg, cwd });
+    } catch (err) {
+      return failExec(err, scope, parsed.json);
+    }
   }
 
   if (!parsed.json) renderList(entries, notSupportedRows, scope);

@@ -24,6 +24,12 @@ describe('resolveTarget — project scope', () => {
     }
   });
 
+  it('opencode → <cwd>/.opencode/skills (its native dir)', () => {
+    const t = resolveTarget('opencode', 'project', CWD, HOME)!;
+    expect(t.kind).toBe('skill-dirs');
+    expect(t.basePath).toBe(join(CWD, '.opencode', 'skills'));
+  });
+
   it('cline → <cwd>/.cline/skills', () => {
     const t = resolveTarget('cline', 'project', CWD, HOME)!;
     expect(t.basePath).toBe(join(CWD, '.cline', 'skills'));
@@ -47,8 +53,8 @@ describe('resolveTarget — global scope', () => {
     expect(t.basePath).toBe(join(HOME, '.cursor', 'skills'));
   });
 
-  it('codex + gemini-cli global stay in ~/.agents/skills', () => {
-    for (const a of ['codex', 'gemini-cli']) {
+  it('codex + gemini-cli + opencode global stay in ~/.agents/skills', () => {
+    for (const a of ['codex', 'gemini-cli', 'opencode']) {
       const t = resolveTarget(a, 'global', CWD, HOME)!;
       expect(t.basePath, a).toBe(join(HOME, '.agents', 'skills'));
     }

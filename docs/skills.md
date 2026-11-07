@@ -38,6 +38,7 @@ Flags: `--global` (user scope; default is the current project), `--agent <id,...
 | `codex` | `.agents/skills/<pack>/` | `~/.agents/skills/<pack>/` |
 | `cursor` | `.agents/skills/<pack>/` | `~/.cursor/skills/<pack>/` |
 | `gemini-cli` | `.agents/skills/<pack>/` | `~/.agents/skills/<pack>/` |
+| `opencode` | `.opencode/skills/<pack>/` | `~/.agents/skills/<pack>/` |
 | `cline` | `.cline/skills/<pack>/` | `~/.cline/skills/<pack>/` |
 | `windsurf` | `.windsurf/rules/wigolo.md` | fenced block in `~/.codeium/windsurf/memories/global_rules.md` |
 

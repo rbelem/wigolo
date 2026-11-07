@@ -318,3 +318,38 @@ describe('browser-engine: authentic path for the raw-CDP rung', () => {
     expect(createBrowserEngine(host).resolveAuthenticChromiumPath()).toBeNull();
   });
 });
+
+describe('browser-engine: installedCandidates', () => {
+  beforeEach(() => {
+    process.env.WIGOLO_BROWSER_CHANNEL = 'chromium';
+    resetConfig();
+  });
+  afterEach(() => {
+    delete process.env.WIGOLO_BROWSER_CHANNEL;
+    resetConfig();
+  });
+
+  it('is empty under the chromium pin', () => {
+    const { host } = fakeHost({ existing: [USER_FLATPAK_CHROME] });
+    expect(createBrowserEngine(host).installedCandidates()).toEqual([]);
+  });
+
+  it('is the ranked installed list under the auto channel, best first', () => {
+    process.env.WIGOLO_BROWSER_CHANNEL = 'auto';
+    resetConfig();
+    const { host } = fakeHost({
+      env: { WIGOLO_CHROME_PATH: '/opt/chrome/chrome' },
+      existing: ['/opt/chrome/chrome', USER_FLATPAK_CHROME, USER_FLATPAK_BRAVE],
+    });
+
+    const candidates = createBrowserEngine(host).installedCandidates();
+
+    expect(candidates.map((c) => c.origin)).toEqual(['override', 'flatpak', 'flatpak']);
+    expect(candidates.map((c) => c.path)).toEqual([
+      '/opt/chrome/chrome',
+      USER_FLATPAK_CHROME,
+      USER_FLATPAK_BRAVE,
+    ]);
+    expect(candidates[1].id).toBe('flatpak:com.google.Chrome');
+  });
+});

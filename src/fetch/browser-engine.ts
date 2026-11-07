@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Browser } from 'playwright';
@@ -52,6 +52,14 @@ export interface BrowserEngine {
    * null. That rung spawns its own child and must never drive the bundled build.
    */
   resolveAuthenticChromiumPath(): string | null;
+  /**
+   * Every installed candidate the plan would try, best first — override, then
+   * native, then Flatpak. Empty when the channel pins the bundled engine. A
+   * caller that has to TEST launchability (doctor, warmup) walks this list
+   * instead of trusting `resolveAuthenticChromiumPath()`'s first entry, which
+   * may be present but broken.
+   */
+  installedCandidates(): InstalledBrowser[];
 }
 
 /**
@@ -168,7 +176,11 @@ function defaultHost(): HostProbe {
     home: homedir(),
     exists: (path) => {
       try {
-        return existsSync(path);
+        // stat, not existsSync/access: an envfs-backed `/usr/bin` resolves any
+        // name at exec time while refusing metadata, so `existsSync` says yes
+        // for a binary Playwright's own stat-based launch check then rejects.
+        // A candidate the launcher cannot stat is not a candidate.
+        return statSync(path).isFile();
       } catch {
         return false;
       }
@@ -213,6 +225,14 @@ export function createBrowserEngine(host: HostProbe = defaultHost()): BrowserEng
         if (candidate.kind === 'installed') return candidate.browser.path;
       }
       return null;
+    },
+
+    installedCandidates() {
+      const out: InstalledBrowser[] = [];
+      for (const candidate of buildPlan(host)) {
+        if (candidate.kind === 'installed') out.push(candidate.browser);
+      }
+      return out;
     },
   };
 }

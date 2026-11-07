@@ -11,8 +11,14 @@ vi.mock('node:fs', async () => {
 const chromiumLaunch = vi.fn();
 const chromiumExec = vi.fn(() => '/fake/playwright/chromium/chrome');
 const resolveAuthentic = vi.fn<() => string | null>(() => null);
+const installedCandidates = vi.fn<
+  () => Array<{ path: string; id: string; origin: 'override' | 'native' | 'flatpak' }>
+>(() => []);
 vi.mock('../../../src/fetch/browser-engine.js', () => ({
-  getBrowserEngine: () => ({ resolveAuthenticChromiumPath: () => resolveAuthentic() }),
+  getBrowserEngine: () => ({
+    resolveAuthenticChromiumPath: () => resolveAuthentic(),
+    installedCandidates: () => installedCandidates(),
+  }),
 }));
 vi.mock('playwright', () => ({
   chromium: {
@@ -111,26 +117,79 @@ describe('probeBrowser', () => {
 });
 
 describe('probeBrowser preferInstalled', () => {
+  const flatpak = {
+    path: '/flatpak/export/bin/com.google.Chrome',
+    id: 'flatpak:com.google.Chrome',
+    origin: 'flatpak' as const,
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(existsSync).mockReturnValue(true);
     chromiumExec.mockReturnValue('/fake/playwright/chromium/chrome');
     chromiumLaunch.mockResolvedValue(fakeBrowser);
     resolveAuthentic.mockReturnValue(null);
+    installedCandidates.mockReturnValue([]);
   });
 
-  it('probes the installed build the tier would really launch', async () => {
-    resolveAuthentic.mockReturnValue('/flatpak/export/bin/com.google.Chrome');
+  it('probes the first installed build the tier would really launch', async () => {
+    installedCandidates.mockReturnValue([flatpak]);
 
     const r = await probeBrowser('chromium', { preferInstalled: true });
 
     expect(r.origin).toBe('installed');
-    expect(r.execPath).toBe('/flatpak/export/bin/com.google.Chrome');
+    expect(r.execPath).toBe(flatpak.path);
     expect(r.launchable).toBe(true);
     expect(chromiumLaunch).toHaveBeenCalledWith({
       headless: true,
-      executablePath: '/flatpak/export/bin/com.google.Chrome',
+      executablePath: flatpak.path,
     });
+  });
+
+  it('walks past an installed build that is on disk but will not launch', async () => {
+    // WHY: /usr/bin/chromium can pass existsSync/access yet be rejected by
+    // Playwright's stat-based launch check (an envfs name, a dangling link, a
+    // build missing OS libs). The working Flatpak behind it must win.
+    const phantom = { path: '/usr/bin/chromium', id: '/usr/bin/chromium', origin: 'native' as const };
+    installedCandidates.mockReturnValue([phantom, flatpak]);
+    chromiumLaunch.mockImplementation(async (opts: { executablePath?: string }) => {
+      if (opts.executablePath === phantom.path) {
+        throw new Error("Failed to launch chromium because executable doesn't exist");
+      }
+      return fakeBrowser;
+    });
+
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.origin).toBe('installed');
+    expect(r.execPath).toBe(flatpak.path);
+    expect(r.launchable).toBe(true);
+  });
+
+  it('falls back to the bundled build when the installed ones all fail', async () => {
+    installedCandidates.mockReturnValue([flatpak]);
+    chromiumLaunch.mockImplementation(async (opts: { executablePath?: string }) => {
+      if (opts.executablePath) throw new Error('missing libnss3.so');
+      return fakeBrowser;
+    });
+
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.origin).toBe('bundled');
+    expect(r.execPath).toBe('/fake/playwright/chromium/chrome');
+    expect(r.launchable).toBe(true);
+  });
+
+  it('reports the installed failure when nothing launches', async () => {
+    installedCandidates.mockReturnValue([flatpak]);
+    chromiumLaunch.mockRejectedValue(new Error('missing libnss3.so'));
+
+    const r = await probeBrowser('chromium', { preferInstalled: true });
+
+    expect(r.origin).toBe('installed');
+    expect(r.execPath).toBe(flatpak.path);
+    expect(r.launchable).toBe(false);
+    expect(r.error).toContain('libnss3');
   });
 
   it('falls back to the bundled build when no installed one is selected', async () => {
@@ -142,23 +201,23 @@ describe('probeBrowser preferInstalled', () => {
   });
 
   it('never consults the engine for a non-chromium family', async () => {
-    resolveAuthentic.mockReturnValue('/flatpak/export/bin/com.google.Chrome');
+    installedCandidates.mockReturnValue([flatpak]);
 
     const r = await probeBrowser('firefox', { preferInstalled: true });
 
     expect(r.origin).toBe('bundled');
-    expect(resolveAuthentic).not.toHaveBeenCalled();
+    expect(installedCandidates).not.toHaveBeenCalled();
   });
 
-  it('reports a missing selected build as not on disk, without launching', async () => {
-    resolveAuthentic.mockReturnValue('/gone/chrome');
-    vi.mocked(existsSync).mockReturnValue(false);
+  it('skips a candidate missing on disk and launches the next', async () => {
+    vi.mocked(existsSync).mockImplementation((p) => String(p) === flatpak.path);
+    const gone = { path: '/gone/chrome', id: '/gone/chrome', origin: 'native' as const };
+    installedCandidates.mockReturnValue([gone, flatpak]);
 
     const r = await probeBrowser('chromium', { preferInstalled: true });
 
-    expect(r.onDisk).toBe(false);
-    expect(r.launchable).toBe(false);
-    expect(r.error).toContain('/gone/chrome');
-    expect(chromiumLaunch).not.toHaveBeenCalled();
+    expect(r.execPath).toBe(flatpak.path);
+    expect(chromiumLaunch).toHaveBeenCalledTimes(1);
+    expect(chromiumLaunch).toHaveBeenCalledWith({ headless: true, executablePath: flatpak.path });
   });
 });

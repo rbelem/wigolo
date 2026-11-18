@@ -3,8 +3,10 @@
 
   inputs = {
     # Same pin as the devbox-global wigolo-git flake, so a library bump there and
-    # here cannot drift into two different glib versions.
-    nixpkgs.url = "github:NixOS/nixpkgs/241313f4e8e508cb9b13278c2b0fa25b9ca27163";
+    # here cannot drift into two different glib versions. Keep glibc at 2.42:
+    # nix-ld loads a 2.42 loader on this host, and libs needing GLIBC_2.43 break
+    # the Playwright browser. This is the last nixos-unstable rev with glibc 2.42.
+    nixpkgs.url = "github:NixOS/nixpkgs/88c4c23f3d6e5a4116ee19e148df5a0f2004f861";
   };
 
   outputs = { self, nixpkgs }:

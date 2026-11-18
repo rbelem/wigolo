@@ -4,7 +4,7 @@ import { searchCategory } from '../../../../../src/cli/tui/schema/search.js';
 describe('searchCategory', () => {
   it('has id search and the expected fields', () => {
     expect(searchCategory.id).toBe('search');
-    expect(searchCategory.fields.length).toBe(6);
+    expect(searchCategory.fields.length).toBe(7);
     const keys = searchCategory.fields.map((f) => f.key);
     expect(keys).toEqual([
       'WIGOLO_SEARCH',

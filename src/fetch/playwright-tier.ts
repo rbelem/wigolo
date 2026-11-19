@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { createLogger } from '../logger.js';
 import { abortRejection } from '../util/abort.js';
 import { settlePage, POST_GOTO_CAP_MS } from './settle.js';
+import { readPageHtml } from './page-content.js';
 import { getConfig } from '../config.js';
 import { IdleEvictor } from '../providers/idle-evictor.js';
 import type { ContentCompleteness } from '../types.js';
@@ -119,7 +120,7 @@ export async function fetchWithPlaywright(url: string, opts: { timeoutMs?: numbe
     if (opts.signal?.aborted) throw opts.signal.reason;
     const settle = await settlePage(page, { budgetMs: Math.min(overall, POST_GOTO_CAP_MS), signal: opts.signal, url });
     if (opts.signal?.aborted) throw opts.signal.reason;
-    const html = await page.content();
+    const html = await readPageHtml(page, url);
     const text = await page.evaluate(() => document.body?.innerText ?? '');
     return { html, text, completeness: settle.completeness };
   } finally {

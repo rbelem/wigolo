@@ -7,6 +7,7 @@ import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
 import { abortRejection } from '../util/abort.js';
 import { settlePage, toCompleteness } from './settle.js';
+import { readPageHtml } from './page-content.js';
 import { DOM_VERDICT_SOURCE, type DomVerdict } from './hydration-probe.js';
 import type { ContentCompleteness } from '../types.js';
 import { sanitizedChildEnv } from '../util/child-env.js';
@@ -252,7 +253,7 @@ async function readContentWithRetry(
 ): Promise<string> {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      return await page.content();
+      return await readPageHtml(page, url);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!NAV_RACE_PATTERN.test(msg) || attempt === 2) throw err;
@@ -261,7 +262,7 @@ async function readContentWithRetry(
       await new Promise((r) => setTimeout(r, 300));
     }
   }
-  return await page.content();
+  return await readPageHtml(page, url);
 }
 
 function getLauncher(type: BrowserType) {

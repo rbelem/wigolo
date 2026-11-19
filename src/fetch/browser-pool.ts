@@ -7,7 +7,7 @@ import { BrowserSelector, type SelectionStrategy } from './browser-selector.js';
 import { executeActions } from './action-executor.js';
 import { abortRejection } from '../util/abort.js';
 import { settlePage, toCompleteness } from './settle.js';
-import { readPageHtml } from './page-content.js';
+import { readPageHtml, NAV_RACE_PATTERN } from './page-content.js';
 import { DOM_VERDICT_SOURCE, type DomVerdict } from './hydration-probe.js';
 import type { ContentCompleteness } from '../types.js';
 import { sanitizedChildEnv } from '../util/child-env.js';
@@ -208,11 +208,13 @@ export interface PoolTypeStat {
 
 const log = createLogger('fetch');
 
+/** Default CDP endpoint of a locally running cloudflare/kitesurf engine. */
+const KITESURF_DEFAULT_CDP_URL = 'ws://127.0.0.1:8787/devtools/browser';
+
 function isSuccessStatus(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
-const NAV_RACE_PATTERN = /execution context (?:was )?destroyed|page is navigating|frame.*detached|target closed/i;
 // Chromium rejects page.goto with this when the response is a download
 // (e.g. a PDF served with content-type application/pdf).
 const DOWNLOAD_START_PATTERN = /download is starting/i;
@@ -269,8 +271,30 @@ function getLauncher(type: BrowserType) {
   switch (type) {
     case 'firefox': return firefox;
     case 'webkit': return webkit;
+    // Kitesurf is driven over CDP (see connectKitesurf); chromium is the
+    // Playwright API that speaks CDP when the type is ever resolved here.
+    case 'kitesurf':
     default: return chromium;
   }
+}
+
+/**
+ * Attach to a cloudflare/kitesurf engine over CDP. Unlike the other browser
+ * types there is no local process to launch: the engine runs as its own Worker
+ * (locally via `wrangler dev`, or at a configured endpoint). The endpoint is
+ * deliberately configurable so a local engine is the default while a remote
+ * one remains an explicit opt-in.
+ */
+async function connectKitesurf(): Promise<Browser> {
+  const endpoint = getConfig().kitesurfCdpUrl ?? KITESURF_DEFAULT_CDP_URL;
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') throw new Error();
+  } catch {
+    throw new Error('WIGOLO_KITESURF_CDP_URL must be a ws:// or wss:// URL');
+  }
+  log.info('connecting to Kitesurf CDP engine', { endpoint: redactUrl(endpoint) });
+  return chromium.connectOverCDP(endpoint, { timeout: 30_000 });
 }
 
 interface TypePool {
@@ -392,6 +416,15 @@ export class MultiBrowserPool {
   private async launchBrowser(type: BrowserType): Promise<Browser> {
     const typePool = this.pools.get(type)!;
     if (!typePool.browser) {
+      if (type === 'kitesurf') {
+        // CDP attach, not a local launch: bypass launcher + installed-browser
+        // resolution + proxy env entirely. Idle eviction just disconnects.
+        typePool.browser = await connectKitesurf();
+        if (typePool.activeCount === 0 && typePool.pool.length === 0) {
+          this.browserEvictors.get(type)?.touch();
+        }
+        return typePool.browser;
+      }
       const launcher = getLauncher(type);
       const cfg = getConfig();
       const proxy = playwrightProxyOption(cfg.proxyUrl, cfg.useProxy);
@@ -771,6 +804,12 @@ export class MultiBrowserPool {
     // failed remote connection never degrades an authenticated fetch to anonymous.
     const localContext = async (type: BrowserType): Promise<BrowserContext> => {
       if (!options.storageStatePath) return this.acquireForType(type);
+      if (type === 'kitesurf') {
+        // Never seed a user's cookies into a CDP engine's own context store
+        // (especially if the endpoint is remote) — the engine owns sessions.
+        log.warn('auth storage state not applied: the Kitesurf CDP engine owns its own cookies', { url });
+        return this.acquireForType(type);
+      }
       const authCtx = await this.openAuthContext(type, options.storageStatePath, options.signal);
       dedicated = true;
       stealthSlotHeld = true;
@@ -785,10 +824,19 @@ export class MultiBrowserPool {
     // failure returns null so we fall through to the normal browser tier.
     const scrapingWss = !options.cdpUrl ? config.scrapingBrowserWss : null;
 
+    // Resolve the type once for both the stealth decision and the launch path.
+    // A pinned CDP endpoint always means chromium, so skip selection there and
+    // keep the round-robin state identical to the previous code path.
+    const selectedType: BrowserType = options.cdpUrl || scrapingWss
+      ? 'chromium'
+      : this.resolveType(options.browserType, url);
+
     // Stealth applies only to the launch path — the CDP path connects to an
     // external browser that owns its own fingerprint. The hosted scraping-browser
     // rung is likewise external, so it also disables the local stealth launch.
-    const useStealth = options.stealth === true && !options.cdpUrl && !scrapingWss;
+    // Kitesurf is CDP-backed too, and has no fingerprint to harden.
+    const useStealth =
+      options.stealth === true && !options.cdpUrl && !scrapingWss && selectedType !== 'kitesurf';
 
     if (options.cdpUrl) {
       // CDP is always Chromium
@@ -842,7 +890,7 @@ export class MultiBrowserPool {
         ctx = await localContext(resolvedType);
       }
     } else if (useStealth) {
-      resolvedType = this.resolveType(options.browserType, url);
+      resolvedType = selectedType;
       // Bound concurrency BEFORE launching so a burst cannot exceed the cap.
       await this.acquireStealthSlot(options.signal);
       stealthSlotHeld = true;
@@ -907,7 +955,7 @@ export class MultiBrowserPool {
         throw err;
       }
     } else if (options.storageStatePath) {
-      resolvedType = this.resolveType(options.browserType, url);
+      resolvedType = selectedType;
       log.debug('fetching with browser (auth storage state)', { url, type: resolvedType });
       // A storage state is one caller's cookies and origin storage. Seeded onto a
       // pooled context it would be handed to every later fetch that reuses that
@@ -915,7 +963,7 @@ export class MultiBrowserPool {
       // in the finally like a dedicated stealth context (the browser stays up).
       ctx = await localContext(resolvedType);
     } else {
-      resolvedType = this.resolveType(options.browserType, url);
+      resolvedType = selectedType;
       log.debug('fetching with browser', { url, type: resolvedType });
       ctx = await this.acquireForType(resolvedType);
     }
@@ -1786,7 +1834,10 @@ export class BrowserPool extends MultiBrowserPool {
   private readonly singleType: BrowserType;
 
   constructor(options?: BrowserPoolOptions) {
-    const type = options?.browserType ?? 'chromium';
+    // The one-shot CLI and shell use this wrapper. Honor WIGOLO_BROWSER_TYPES
+    // like the MCP/daemon pool does, so a configured first type (e.g. kitesurf)
+    // is actually used instead of silently falling back to chromium.
+    const type = options?.browserType ?? getConfig().browserTypes[0] ?? 'chromium';
     super({
       browserTypes: [type],
     });

@@ -324,7 +324,7 @@ export interface ExtractionResult {
 
 export type ExtractorType = 'defuddle' | 'readability' | 'turndown' | 'site-specific';
 
-export type BrowserType = 'chromium' | 'firefox' | 'webkit';
+export type BrowserType = 'chromium' | 'firefox' | 'webkit' | 'kitesurf';
 
 export interface CDPSession {
   id: string;

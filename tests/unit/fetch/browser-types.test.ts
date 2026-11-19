@@ -29,6 +29,22 @@ describe('config -- browserTypes', () => {
     resetConfig();
     expect(getConfig().browserTypes).toEqual(['chromium', 'firefox', 'webkit']);
   });
+
+  it('accepts kitesurf as a browser type', () => {
+    process.env.WIGOLO_BROWSER_TYPES = 'chromium,kitesurf';
+    resetConfig();
+    expect(getConfig().browserTypes).toEqual(['chromium', 'kitesurf']);
+  });
+
+  it('reads the Kitesurf CDP endpoint from WIGOLO_KITESURF_CDP_URL', () => {
+    process.env.WIGOLO_KITESURF_CDP_URL = 'ws://127.0.0.1:8799/devtools/browser';
+    resetConfig();
+    expect(getConfig().kitesurfCdpUrl).toBe('ws://127.0.0.1:8799/devtools/browser');
+  });
+
+  it('leaves the Kitesurf CDP endpoint unset by default', () => {
+    expect(getConfig().kitesurfCdpUrl).toBeNull();
+  });
 });
 
 describe('parseBrowserTypes', () => {
@@ -58,6 +74,12 @@ describe('parseBrowserTypes', () => {
 
   it('parses all three valid types', () => {
     expect(parseBrowserTypes('chromium,firefox,webkit')).toEqual(['chromium', 'firefox', 'webkit']);
+  });
+
+  it('parses kitesurf alongside the local browser types', () => {
+    expect(parseBrowserTypes('chromium,firefox,webkit,kitesurf')).toEqual([
+      'chromium', 'firefox', 'webkit', 'kitesurf',
+    ]);
   });
 
   it('trims whitespace around types', () => {

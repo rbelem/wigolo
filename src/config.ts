@@ -419,6 +419,14 @@ export interface Config {
    */
   scrapingBrowserWss: string | null;
   /**
+   * CDP endpoint for the `kitesurf` browser type (cloudflare/kitesurf engine).
+   * Defaults to a local engine at ws://127.0.0.1:8787/devtools/browser when the
+   * type is configured but no endpoint is set. Credential-gated and
+   * keychain-backed (denylisted so inline credentials never persist cleartext).
+   * WIGOLO_KITESURF_CDP_URL.
+   */
+  kitesurfCdpUrl: string | null;
+  /**
    * Opt-in Reddit OAuth app client id (non-secret). Paired with
    * `redditClientSecret`, enables the credential-gated Reddit OAuth-API fetch
    * path: when both are present AND a fetch targets a Reddit URL, the router
@@ -1068,6 +1076,10 @@ export function getConfig(): Config {
     scrapingBrowserWss: resolveCredentialUrl(
       envStr('WIGOLO_SCRAPING_BROWSER_WSS', null, settings, 'scrapingBrowserWss'),
       'scrapingBrowserWss',
+    ),
+    kitesurfCdpUrl: resolveCredentialUrl(
+      envStr('WIGOLO_KITESURF_CDP_URL', null, settings, 'kitesurfCdpUrl'),
+      'kitesurfCdpUrl',
     ),
     // The TLS-impersonation backend accepts a `<browser>_<version>` profile
     // string and forwards it into a Rust napi binding. Passing an unvalidated

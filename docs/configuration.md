@@ -65,7 +65,8 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 | `MAX_REDIRECTS` | `5` | Redirect ceiling. |
 | `WIGOLO_MAX_RESPONSE_BYTES` | `20971520` (20 MB) | Largest response body the HTTP and TLS fetch tiers will buffer. Bigger responses fail with `response_too_large` instead of exhausting memory. `0` disables the cap. Browser-rendered pages, the Reddit API and escape-hatch fetchers, and redirect-body drains aren't covered by this cap. |
 | `MAX_BROWSERS` | `3` | Browser-engine pool size for JS-rendered pages. |
-| `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list of browser families to pool. |
+| `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list of browser families to pool: `chromium`, `firefox`, `webkit`, `kitesurf`. |
+| `WIGOLO_KITESURF_CDP_URL` | `ws://127.0.0.1:8787/devtools/browser` | CDP endpoint for the `kitesurf` browser type (a locally running [cloudflare/kitesurf](https://github.com/cloudflare/kitesurf) engine via `wrangler dev`; may be `wss://` for a remote engine). Credentials in the URL are keychain-backed and never persisted to config.json. |
 | `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build the browser tier launches. `chromium` uses the bundled engine only, so every host behaves identically. `auto` and `chrome` prefer an installed build and fall back to the bundled engine when it cannot start. |
 | `WIGOLO_BROWSER_HEADFUL` | `false` | Launch the browser with a visible window. Off by default so a background server never pops a window. |
 | `WIGOLO_CHROME_PATH` | unset | Absolute path to a Chromium binary to use instead of the bundled engine. Honoured only when the file exists. |
@@ -88,6 +89,8 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 Reliability framing matters here: these tiers make wigolo read pages the way a real browser does, and it learns per-domain which tier works (inspect with [`wigolo tune`](./cli.md#tune)). When a challenge doesn't clear, the failure is labeled honestly instead of returning junk. Crawling stays polite throughout — robots.txt respected by default, per-domain rate limits, and page budgets sized for research, not bulk harvesting.
 
 For fetching pages behind a login with your own browser session: `WIGOLO_CDP_URL` (attach to a running browser's debug port), `WIGOLO_CHROME_PROFILE_PATH` (use a profile), `WIGOLO_AUTH_STATE_PATH` (a saved storage-state file). Then pass `use_auth: true` on `fetch`/`crawl`. `wigolo auth discover` lists attachable sessions. A storage-state file is loaded into a fresh context for each fetch; a browser attached over CDP is driven through its existing context, which keeps that browser's own cookies.
+
+`kitesurf` is a CDP-backed browser type rather than a locally launched one: when selected by the pool, wigolo attaches to the engine's CDP endpoint (`WIGOLO_KITESURF_CDP_URL`, default `ws://127.0.0.1:8787/devtools/browser`) and drives it with Playwright. The endpoint may be remote (`wss://`), but a local engine is the default — note that the devbox `kitesurf` package is only the terminal client; the engine itself is a separate Cloudflare Worker build. Stealth fingerprint hardening, browser channel and `WIGOLO_CHROME_PATH` do not apply to this type; stealth escalations stay on local Chrome.
 
 A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto` picks it up with no extra configuration. The engine launches Flatpak through flatpak's own launcher at `~/.local/share/flatpak/app/<app-id>/current/active/export/bin/<app-id>`, so the browser runs inside its sandbox and needs no extra host libraries. One caveat. A branded Chrome installed somewhere the native table misses can still be pointed at explicitly with `WIGOLO_CHROME_PATH=/path/to/chrome`.
 

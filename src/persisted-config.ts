@@ -56,6 +56,9 @@ export const SETTINGS_SECRETS_DENYLIST = new Set<string>([
   // acts as an IP+solver escape rung. Treat it like a secret: never persist it
   // to config.json in cleartext. Resolved from env or the OS keychain.
   'scrapingBrowserWss',
+  // Kitesurf CDP endpoint may carry inline credentials (e.g. Cloudflare Access
+  // service tokens); treat it like the hosted-CDP endpoint above.
+  'kitesurfCdpUrl',
   // Hosted-inference bearer tokens. These are read through envStr(..., settings)
   // like any other knob, so without this entry `export-import-config` and
   // writePersistedConfig would round-trip them to disk in cleartext.

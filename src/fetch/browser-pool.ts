@@ -413,18 +413,32 @@ export class MultiBrowserPool {
     return this.selector.select();
   }
 
+  private async launchKitesurf(): Promise<Browser> {
+    // CDP attach, not a local launch: bypass launcher + installed-browser
+    // resolution + proxy env entirely. Idle eviction just disconnects.
+    const browser = await connectKitesurf();
+    const typePool = this.pools.get('kitesurf');
+    if (typePool && typePool.activeCount === 0 && typePool.pool.length === 0) {
+      this.browserEvictors.get('kitesurf')?.touch();
+    }
+    return browser;
+  }
+
   private async launchBrowser(type: BrowserType): Promise<Browser> {
+    if (type === 'kitesurf') {
+      // Kitesurf is the default type; an unavailable engine must not make
+      // every browser fetch fail. Degrade to a local Chromium instead.
+      try {
+        return await this.launchKitesurf();
+      } catch (err) {
+        log.warn('Kitesurf CDP engine unavailable, falling back to Chromium', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        type = 'chromium';
+      }
+    }
     const typePool = this.pools.get(type)!;
     if (!typePool.browser) {
-      if (type === 'kitesurf') {
-        // CDP attach, not a local launch: bypass launcher + installed-browser
-        // resolution + proxy env entirely. Idle eviction just disconnects.
-        typePool.browser = await connectKitesurf();
-        if (typePool.activeCount === 0 && typePool.pool.length === 0) {
-          this.browserEvictors.get(type)?.touch();
-        }
-        return typePool.browser;
-      }
       const launcher = getLauncher(type);
       const cfg = getConfig();
       const proxy = playwrightProxyOption(cfg.proxyUrl, cfg.useProxy);

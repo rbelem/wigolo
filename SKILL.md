@@ -409,7 +409,7 @@ Top environment variables. All optional — defaults are safe.
 | `WIGOLO_CHROME_PROFILE_PATH` | unset | Chrome profile for `use_auth: true` |
 | `WIGOLO_CDP_URL` | unset | Chrome DevTools endpoint (e.g. `http://localhost:9222`) |
 | `MAX_BROWSERS` | `3` | Browser pool size |
-| `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list: `chromium,firefox,webkit,kitesurf` |
+| `WIGOLO_BROWSER_TYPES` | `kitesurf` | Comma list: `kitesurf,chromium,firefox,webkit` |
 | `WIGOLO_KITESURF_CDP_URL` | `ws://127.0.0.1:8787/devtools/browser` | CDP endpoint for the `kitesurf` browser type (local cloudflare/kitesurf engine by default) |
 | `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build to launch: `chromium` (bundled) \| `auto`/`chrome` (an installed build, Flatpak included, bundled as fallback) |
 | `WIGOLO_CHROME_PATH` | unset | Absolute path to a Chromium binary to use instead of the bundled engine |

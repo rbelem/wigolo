@@ -65,7 +65,7 @@ The legacy sidecar has its own knobs when you opt in: `WIGOLO_SEARXNG_URL` (use 
 | `MAX_REDIRECTS` | `5` | Redirect ceiling. |
 | `WIGOLO_MAX_RESPONSE_BYTES` | `20971520` (20 MB) | Largest response body the HTTP and TLS fetch tiers will buffer. Bigger responses fail with `response_too_large` instead of exhausting memory. `0` disables the cap. Browser-rendered pages, the Reddit API and escape-hatch fetchers, and redirect-body drains aren't covered by this cap. |
 | `MAX_BROWSERS` | `3` | Browser-engine pool size for JS-rendered pages. |
-| `WIGOLO_BROWSER_TYPES` | `chromium` | Comma list of browser families to pool: `chromium`, `firefox`, `webkit`, `kitesurf`. |
+| `WIGOLO_BROWSER_TYPES` | `kitesurf` | Comma list of browser families to pool: `kitesurf`, `chromium`, `firefox`, `webkit`. |
 | `WIGOLO_KITESURF_CDP_URL` | `ws://127.0.0.1:8787/devtools/browser` | CDP endpoint for the `kitesurf` browser type (a locally running [cloudflare/kitesurf](https://github.com/cloudflare/kitesurf) engine via `wrangler dev`; may be `wss://` for a remote engine). Credentials in the URL are keychain-backed and never persisted to config.json. |
 | `WIGOLO_BROWSER_CHANNEL` | `chromium` | Which Chromium build the browser tier launches. `chromium` uses the bundled engine only, so every host behaves identically. `auto` and `chrome` prefer an installed build and fall back to the bundled engine when it cannot start. |
 | `WIGOLO_BROWSER_HEADFUL` | `false` | Launch the browser with a visible window. Off by default so a background server never pops a window. |

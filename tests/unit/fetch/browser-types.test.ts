@@ -8,8 +8,8 @@ describe('config -- browserTypes', () => {
   beforeEach(() => { process.env = { ...originalEnv }; resetConfig(); });
   afterEach(() => { process.env = originalEnv; resetConfig(); });
 
-  it('defaults to ["chromium"]', () => {
-    expect(getConfig().browserTypes).toEqual(['chromium']);
+  it('defaults to ["kitesurf"]', () => {
+    expect(getConfig().browserTypes).toEqual(['kitesurf']);
   });
 
   it('reads WIGOLO_BROWSER_TYPES=chromium', () => {
@@ -48,20 +48,20 @@ describe('config -- browserTypes', () => {
 });
 
 describe('parseBrowserTypes', () => {
-  it('returns ["chromium"] for undefined input', () => {
-    expect(parseBrowserTypes(undefined)).toEqual(['chromium']);
+  it('returns ["kitesurf"] for undefined input', () => {
+    expect(parseBrowserTypes(undefined)).toEqual(['kitesurf']);
   });
 
-  it('returns ["chromium"] for null input', () => {
-    expect(parseBrowserTypes(null as unknown as string | undefined)).toEqual(['chromium']);
+  it('returns ["kitesurf"] for null input', () => {
+    expect(parseBrowserTypes(null as unknown as string | undefined)).toEqual(['kitesurf']);
   });
 
-  it('returns ["chromium"] for empty string', () => {
-    expect(parseBrowserTypes('')).toEqual(['chromium']);
+  it('returns ["kitesurf"] for empty string', () => {
+    expect(parseBrowserTypes('')).toEqual(['kitesurf']);
   });
 
-  it('returns ["chromium"] for whitespace-only string', () => {
-    expect(parseBrowserTypes('   ')).toEqual(['chromium']);
+  it('returns ["kitesurf"] for whitespace-only string', () => {
+    expect(parseBrowserTypes('   ')).toEqual(['kitesurf']);
   });
 
   it('parses single valid type', () => {
@@ -95,9 +95,9 @@ describe('parseBrowserTypes', () => {
     expect(result).toEqual(['chromium', 'firefox']);
   });
 
-  it('falls back to ["chromium"] when all types are invalid', () => {
+  it('falls back to ["kitesurf"] when all types are invalid', () => {
     const result = parseBrowserTypes('netscape,ie6,opera');
-    expect(result).toEqual(['chromium']);
+    expect(result).toEqual(['kitesurf']);
   });
 
   it('deduplicates repeated types', () => {
@@ -106,17 +106,17 @@ describe('parseBrowserTypes', () => {
 
   it('is case-sensitive (uppercase is invalid)', () => {
     const result = parseBrowserTypes('Chromium,Firefox');
-    expect(result).toEqual(['chromium']);
+    expect(result).toEqual(['kitesurf']);
   });
 
-  it('handles single invalid type by falling back to chromium', () => {
+  it('handles single invalid type by falling back to kitesurf', () => {
     const result = parseBrowserTypes('invalid');
-    expect(result).toEqual(['chromium']);
+    expect(result).toEqual(['kitesurf']);
   });
 
-  it('rejects lightpanda — removed in SP1 — and falls back to chromium', () => {
+  it('rejects lightpanda — removed in SP1 — and falls back to kitesurf', () => {
     // SP1 dropped Lightpanda; the parser must no longer recognise it.
-    expect(parseBrowserTypes('lightpanda')).toEqual(['chromium']);
+    expect(parseBrowserTypes('lightpanda')).toEqual(['kitesurf']);
   });
 
   it('preserves ordering of first occurrence', () => {

@@ -2,7 +2,7 @@ import type { BrowserType } from '../types.js';
 
 const VALID_BROWSER_TYPES: ReadonlySet<string> = new Set(['chromium', 'firefox', 'webkit', 'kitesurf']);
 
-const DEFAULT_BROWSER_TYPES: BrowserType[] = ['chromium'];
+const DEFAULT_BROWSER_TYPES: BrowserType[] = ['kitesurf'];
 
 function warn(msg: string, data: Record<string, unknown>): void {
   const line = JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg, module: 'fetch', data });

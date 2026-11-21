@@ -339,40 +339,42 @@ export class MultiBrowserPool {
     this.selector = new BrowserSelector(types, options?.selectionStrategy ?? 'round-robin');
 
     for (const type of types) {
-      this.pools.set(type, {
-        browser: null,
-        pool: [],
-        activeCount: 0,
-        waitQueue: [],
-        idleTimers: new Map(),
-      });
-      // Idle eviction for the browser PROCESS. The Chromium process tree is
-      // the single largest resident cost (~1.2 GB), so it must be reclaimable
-      // independently of the contexts it hosts.
-      this.browserEvictors.set(
-        type,
-        new IdleEvictor({
-          idleMs: () => getConfig().browserProcessIdleTimeoutMs,
-          // A browser is never evicted while the type is not quiescent: the
-          // in-flight fetch would fail. Deferral is unbounded here (unlike a
-          // model session) because a fetch always completes — it has its own
-          // timeout — and releasing its context re-arms the clock.
-          isBusy: () => {
-            const p = this.pools.get(type)!;
-            return p.activeCount > 0 || p.pool.length > 0 || p.waitQueue.length > 0;
-          },
-          maxDeferrals: Number.POSITIVE_INFINITY,
-          onEvict: () => {
-            void this.closeBrowserIfIdle(type);
-          },
-        }),
-      );
+      this.ensurePool(type);
     }
 
     log.info('multi-browser pool initialized', {
       types: this.configuredTypes,
       strategy: options?.selectionStrategy ?? 'round-robin',
     });
+  }
+
+  /**
+   * Create the pool + idle evictor for a browser type if absent. The Kitesurf
+   * fallback needs a Chromium pool even when Chromium is not configured.
+   */
+  private ensurePool(type: BrowserType): void {
+    if (this.pools.has(type)) return;
+    this.pools.set(type, {
+      browser: null,
+      pool: [],
+      activeCount: 0,
+      waitQueue: [],
+      idleTimers: new Map(),
+    });
+    this.browserEvictors.set(
+      type,
+      new IdleEvictor({
+        idleMs: () => getConfig().browserProcessIdleTimeoutMs,
+        isBusy: () => {
+          const p = this.pools.get(type)!;
+          return p.activeCount > 0 || p.pool.length > 0 || p.waitQueue.length > 0;
+        },
+        maxDeferrals: Number.POSITIVE_INFINITY,
+        onEvict: () => {
+          void this.closeBrowserIfIdle(type);
+        },
+      }),
+    );
   }
 
   getConfiguredTypes(): BrowserType[] {
@@ -435,6 +437,7 @@ export class MultiBrowserPool {
           error: err instanceof Error ? err.message : String(err),
         });
         type = 'chromium';
+        this.ensurePool(type);
       }
     }
     const typePool = this.pools.get(type)!;

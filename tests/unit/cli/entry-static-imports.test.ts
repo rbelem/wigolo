@@ -48,8 +48,11 @@ function packagesReachedFrom(entry: string): Set<string> {
 describe('entry point static imports', () => {
   it('does not load the interactive prompt library at startup', () => {
     const packages = packagesReachedFrom(join(SRC, 'index.ts'));
-    // Control: the walk does reach packages the entry really loads eagerly.
-    expect(packages.has('@modelcontextprotocol/sdk/server/index.js') || [...packages].some((p) => p.startsWith('@modelcontextprotocol/'))).toBe(true);
+    // Control: the walk genuinely reaches the proxy dispatcher's `undici`,
+    // which upstream installs at the entry so every fetch honors the proxy.
+    // The MCP server, commands and prompt library are all dynamic imports
+    // in this fork (see the lazy-import graph guard), so they are absent.
+    expect(packages.has('undici')).toBe(true);
     expect([...packages].filter((p) => p.startsWith('@inquirer/'))).toEqual([]);
   });
 });

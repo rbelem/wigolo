@@ -58,7 +58,7 @@ describe('BrowserPool browser-process idle close', () => {
   it('closes a prewarmed browser that never served a context', async () => {
     process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '80';
     resetConfig();
-    const pool = new BrowserPool();
+    const pool = new BrowserPool({ browserType: 'chromium' });
 
     await pool.warm();
     expect(chromium.launch).toHaveBeenCalledTimes(1);
@@ -73,7 +73,7 @@ describe('BrowserPool browser-process idle close', () => {
     process.env.BROWSER_IDLE_TIMEOUT = '60';
     process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '80';
     resetConfig();
-    const pool = new BrowserPool();
+    const pool = new BrowserPool({ browserType: 'chromium' });
 
     const ctx = await pool.acquire();
     pool.release(ctx);
@@ -89,7 +89,7 @@ describe('BrowserPool browser-process idle close', () => {
     process.env.BROWSER_IDLE_TIMEOUT = '60';
     process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '80';
     resetConfig();
-    const pool = new BrowserPool();
+    const pool = new BrowserPool({ browserType: 'chromium' });
 
     // Acquire and never release: the browser is in use.
     await pool.acquire();
@@ -104,7 +104,7 @@ describe('BrowserPool browser-process idle close', () => {
     process.env.BROWSER_IDLE_TIMEOUT = '60';
     process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '80';
     resetConfig();
-    const pool = new BrowserPool();
+    const pool = new BrowserPool({ browserType: 'chromium' });
 
     const ctx = await pool.acquire();
     pool.release(ctx);
@@ -123,7 +123,7 @@ describe('BrowserPool browser-process idle close', () => {
     process.env.BROWSER_IDLE_TIMEOUT = '60';
     process.env.BROWSER_PROCESS_IDLE_TIMEOUT = '0';
     resetConfig();
-    const pool = new BrowserPool();
+    const pool = new BrowserPool({ browserType: 'chromium' });
 
     const ctx = await pool.acquire();
     pool.release(ctx);

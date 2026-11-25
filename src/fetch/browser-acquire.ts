@@ -37,6 +37,10 @@ const BROWSER_ENGINES: Record<BrowserType, { executablePath(): string }> = {
   chromium,
   firefox,
   webkit,
+  // Kitesurf is CDP-backed: the engine runs in its own Worker, so there is no
+  // local Playwright binary to install or probe. Any path works here because
+  // the disk probe skips kitesurf; it only exists to keep this map exhaustive.
+  kitesurf: chromium,
 };
 
 /**
@@ -65,6 +69,9 @@ export function browserInstalledOnDisk(
     types.length > 0 ? types : [ACQUIRED_BROWSER_TYPE];
   try {
     return configured.every(type => {
+      // A CDP-backed engine has no local binary: its availability is decided
+      // by the endpoint when connecting, not by an on-disk probe.
+      if (type === 'kitesurf') return true;
       const exec = BROWSER_ENGINES[type].executablePath();
       return !!exec && existsSync(exec);
     });

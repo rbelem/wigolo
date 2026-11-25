@@ -116,7 +116,12 @@ describe('CLI static import graph', () => {
     // The entrypoint pulls in only its own light modules; every dependency
     // (including better-sqlite3 and sqlite-vec, via the shutdown path) is
     // loaded dynamically at the point of use.
-    expect([...reachable.keys()]).toEqual([]);
+    //
+    // `undici` is the sole exception: upstream's proxy dispatcher is a light
+    // (~2 MB) module that must be installed before the first fetch, and is
+    // intentionally imported at the top level so the proxy is honored on
+    // every request. Keep this allowlist to that one package only.
+    expect([...reachable.keys()]).toEqual(['undici']);
   });
 
   it('keeps the boot path small', () => {

@@ -71,6 +71,10 @@ const AMBIENT_CONFIG_VARS = [
   'WIGOLO_BROWSER_CHANNEL',
   'WIGOLO_CHROME_PATH',
   'WIGOLO_CDP_URL',
+  // Flatpak discovery keys off XDG_DATA_HOME; on a desktop it points at the
+  // developer's real /home, so installed-browser path probes see builds the
+  // mock does not know about. CI has no such var; strip it everywhere.
+  'XDG_DATA_HOME',
   // data/config paths: never point the suite at a developer's real profile
   'WIGOLO_DATA_DIR',
   'WIGOLO_CONFIG_PATH',

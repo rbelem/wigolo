@@ -18,17 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
-          cache: 'npm'
+          bun-version: '1.4.4'
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
-      - run: npm run build
+      - run: bun run build
 
       - name: Run agent benchmark
-        run: npm run bench:agent -- ${{ github.event.inputs.filter && format('--filter {0}', github.event.inputs.filter) || '' }}
+        run: bun run bench:agent -- ${{ github.event.inputs.filter && format('--filter {0}', github.event.inputs.filter) || '' }}
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -41,6 +40,6 @@ jobs:
 
       - name: Check for regressions
         run: |
-          RATE=$(node -e "const r=require('./benchmarks/agent/output/agent-benchmark.json'); console.log(r.summary.taskCompletionRate)")
+          RATE=$(bun -e "const r=require('./benchmarks/agent/output/agent-benchmark.json'); console.log(r.summary.taskCompletionRate)")
           echo "Task Completion Rate: $RATE"
-          node -e "if (parseFloat('$RATE') < 0.5) { console.error('Task completion rate below threshold (50%)'); process.exit(1); }"
+          bun -e "if (parseFloat('$RATE') < 0.5) { console.error('Task completion rate below threshold (50%)'); process.exit(1); }"

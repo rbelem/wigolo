@@ -14,15 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: '22'
+          bun-version: '1.4.4'
 
       - name: Generate star chart
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUT_DIR: out
-        run: node scripts/star-chart.mjs
+        run: bun scripts/star-chart.mjs
 
       - name: Publish to star-chart branch
         env:

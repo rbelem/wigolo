@@ -11,8 +11,8 @@ Briefly describe the change and the problem it solves.
 
 ## Testing
 
-- [ ] `npm test` passes
-- [ ] `npm run lint` passes
+- [ ] `bun run test` passes
+- [ ] `bun run lint` passes
 - [ ] Added/updated tests for the new behavior
 
 ## Checklist

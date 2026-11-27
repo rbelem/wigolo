@@ -24,7 +24,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.4'
+          bun-version: '1.4.5'
 
       - name: Install dependencies
         shell: bash
@@ -52,7 +52,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: '1.4.4'
+          bun-version: '1.4.5'
 
       - run: bun install --frozen-lockfile
 
@@ -91,11 +91,11 @@ jobs:
         # Every desktop OS across the supported Bun range. bun:sqlite is built
         # in, so there is no native addon ABI to match across versions here.
         os: [ubuntu-latest, macos-latest, windows-latest]
-        bun: ['1.4.4']
+        bun: ['1.4.5']
         include:
           # Extra linux-arm64 coverage (non-blocking above).
           - os: ubuntu-22.04-arm
-            bun: '1.4.4'
+            bun: '1.4.5'
     env:
       # Add GEMINI_API_KEY as a repo secret to exercise the
       # cloud-LLM path. Absent (e.g. on fork PRs) → the LLM step is skipped and
@@ -161,7 +161,7 @@ jobs:
           bun -e "const t=require('fs').readFileSync('search.json','utf8'); JSON.parse(t); if (t.length < 50){ console.error('search/rerank produced trivial output'); process.exit(1) } console.log('search + rerank + sqlite OK')"
 
       - name: cloud-LLM synthesis (Gemini) — proves the LLM path + key wiring
-        if: matrix.os == 'ubuntu-latest' && matrix.bun == '1.4.4' && env.GEMINI_API_KEY != ''
+        if: matrix.os == 'ubuntu-latest' && matrix.bun == '1.4.5' && env.GEMINI_API_KEY != ''
         # Best-effort: an external LLM API's quota or a transient error must not
         # fail this required job. It verifies the synthesis path when it can.
         continue-on-error: true

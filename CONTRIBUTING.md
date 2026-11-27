@@ -5,17 +5,30 @@ up, how to propose changes, and the contribution terms.
 
 ## Development setup
 
-Requires Node.js ≥ 22.
+Requires **Bun ≥ 1.4** (primary runtime, package manager, and script runner).
+Node 22+ is still needed for the `@yao-pkg/pkg` single-file binary channel and
+for `npm publish`; everything else runs under Bun.
 
 ```bash
-npm install
-npm run build        # tsc -> dist/
-npm test             # full vitest suite
-npm run test:unit    # unit tests only
-npm run lint         # tsc --noEmit
+bun install                  # uses bun.lock (frozen in CI)
+bun run build                # tsup + tsc -> dist/
+bun run test                 # full vitest suite
+bun run test:unit            # unit tests only
+bun run lint                 # tsc --noEmit
 ```
 
-`npm run dev` runs the CLI from source via `tsx`.
+`bun run dev` runs the CLI directly from TypeScript (`bun src/index.ts`).
+
+## SQLite / native modules
+
+`bun:sqlite` is used under Bun; `better-sqlite3` is used under Node (npm
+tarball and packaged binary). Both go through the compatibility adapter in
+`src/util/sqlite.ts`, so callers use the same API. `sqlite-vec` works with both.
+If you add a new SQLite call, keep it to the shared API surface (`prepare`,
+`exec`, `pragma`, `transaction`, `loadExtension`, `close`).
+
+Because native addons are ABI-bound, run `bun install` inside the devbox shell
+(`devbox shell`) — its `bun` and Node versions are pinned in `devbox.json`.
 
 ## Proposing changes
 
@@ -23,7 +36,7 @@ npm run lint         # tsc --noEmit
 2. Branch from `main`, keep changes focused, and add tests for new behavior.
 3. Use [Conventional Commits](https://www.conventionalcommits.org/)
    (`feat:`, `fix:`, `test:`, `refactor:`, `chore:`, `docs:`).
-4. Make sure `npm test` and `npm run lint` pass before opening a PR.
+4. Make sure `bun run test` and `bun run lint` pass before opening a PR.
 5. Open a pull request describing the change and why it matters.
 
 ## Guidelines

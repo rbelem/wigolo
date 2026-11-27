@@ -43,25 +43,25 @@
     "agent-tools"
   ],
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
-    "build:binary": "npm run build && node packaging/binary/bundle.mjs && bash packaging/binary/pack.sh",
-    "build:watch": "tsup --watch",
-    "dev": "tsx src/index.ts",
-    "pretest": "npm run build",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:unit": "vitest run tests/unit",
-    "test:integration": "vitest run tests/integration",
-    "test:e2e": "vitest run tests/e2e",
-    "test:perf": "vitest run --config vitest.perf.config.ts",
+    "build": "bunx tsup && bunx tsc -p tsconfig.build.json",
+    "build:binary": "bun run build && node packaging/binary/bundle.mjs && bash packaging/binary/pack.sh",
+    "build:watch": "bunx tsup --watch",
+    "dev": "bun src/index.ts",
+    "pretest": "bun run build",
+    "test": "bunx vitest run",
+    "test:watch": "bunx vitest",
+    "test:unit": "bunx vitest run tests/unit",
+    "test:integration": "bunx vitest run tests/integration",
+    "test:e2e": "bunx vitest run tests/e2e",
+    "test:perf": "bunx vitest run --config vitest.perf.config.ts",
     "test:sdk:ts": "npm --prefix sdks/typescript test",
-    "test:sdk:py": "node scripts/run-sdk-py-tests.mjs",
-    "lint": "tsc --noEmit",
-    "bench:extraction": "tsx benchmarks/extraction/runner.ts",
-    "bench:search": "tsx benchmarks/search/runner.ts",
-    "bench:agent": "tsx benchmarks/agent/runner.ts",
-    "bench:embedding": "tsx benchmarks/embedding/runner.ts",
-    "bench:embedding:quality": "RUN_FASTEMBED=1 tsx benchmarks/embedding/runner.ts"
+    "test:sdk:py": "bun scripts/run-sdk-py-tests.mjs",
+    "lint": "bunx tsc --noEmit",
+    "bench:extraction": "bun benchmarks/extraction/runner.ts",
+    "bench:search": "bun benchmarks/search/runner.ts",
+    "bench:agent": "bun benchmarks/agent/runner.ts",
+    "bench:embedding": "bun benchmarks/embedding/runner.ts",
+    "bench:embedding:quality": "RUN_FASTEMBED=1 bun benchmarks/embedding/runner.ts"
   },
   "publishConfig": {
     "access": "public",
@@ -95,7 +95,8 @@
     ]
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "bun": ">=1.4"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
@@ -153,5 +154,16 @@
   },
   "overrides": {
     "hono": "^4.12.25"
-  }
+  },
+  "trustedDependencies": [
+    "better-sqlite3",
+    "onnxruntime-node",
+    "protobufjs",
+    "sqlite-vec",
+    "sharp",
+    "@napi-rs/keyring",
+    "wreq-js",
+    "@anush008/tokenizers",
+    "esbuild"
+  ]
 }

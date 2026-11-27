@@ -1,6 +1,44 @@
 {
   "lockfile_version": "1",
   "packages": {
+    "bun@1.4.4": {
+      "last_modified": "2026-11-22T18:15:35Z",
+      "resolved": "github:NixOS/nixpkgs/619c39f6eac5d1ed6b8f073a9414baf7034b2356#bun",
+      "source": "devbox-search",
+      "version": "1.4.4",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/i9scmlpzzjaxcksa7h0h8gzkbppdr01y-bun-1.4.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/i9scmlpzzjaxcksa7h0h8gzkbppdr01y-bun-1.4.4"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/h7a4iym1r9hwicz8c7qcw13z7l4g4bfz-bun-1.4.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/h7a4iym1r9hwicz8c7qcw13z7l4g4bfz-bun-1.4.4"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/0gk371kgjyv7s0az07hxjrl8g9k0pf3m-bun-1.4.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/0gk371kgjyv7s0az07hxjrl8g9k0pf3m-bun-1.4.4"
+        }
+      }
+    },
     "github:NixOS/nixpkgs/nixpkgs-unstable": {
       "last_modified": "2026-10-20T14:23:57Z",
       "resolved": "github:NixOS/nixpkgs/5adc50831c259f87faeb09ddf930d43597197473?lastModified=1792506237&narHash=sha256-Q%2F8KLB6jNfpaUN1HAedE%2Fu%2FEt9feE%2FzYSsutBLKrCFk%3D"

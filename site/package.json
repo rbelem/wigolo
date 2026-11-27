@@ -7,13 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "logos:mine": "node scripts/logo-wall/mine.mjs",
-    "logos:fetch": "node scripts/logo-wall/fetch-logos.mjs",
-    "logos:check": "node scripts/logo-wall/fetch-logos.mjs --check",
-    "test": "vitest run && node --test scripts/logo-wall/*.test.mjs scripts/sync-content.test.mjs",
-    "predev": "node scripts/sync-content.mjs",
-    "prebuild": "node scripts/sync-content.mjs",
-    "indexnow": "node scripts/indexnow.mjs"
+    "logos:mine": "bun scripts/logo-wall/mine.mjs",
+    "logos:fetch": "bun scripts/logo-wall/fetch-logos.mjs",
+    "logos:check": "bun scripts/logo-wall/fetch-logos.mjs --check",
+    "test": "bunx vitest run && bun test scripts/logo-wall/*.test.mjs scripts/sync-content.test.mjs",
+    "predev": "bun scripts/sync-content.mjs",
+    "prebuild": "bun scripts/sync-content.mjs",
+    "indexnow": "bun scripts/indexnow.mjs"
   },
   "dependencies": {
     "fumadocs-core": "16.15.13",

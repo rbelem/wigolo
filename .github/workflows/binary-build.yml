@@ -98,16 +98,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Build dist + CJS bundle
         run: |
-          npm run build
+          bun run build
           node packaging/binary/bundle.mjs
 
       - name: Compose per-platform pkg config

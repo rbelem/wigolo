@@ -42,7 +42,8 @@ _release:
 	if [ -n "$$(git status --porcelain)" ]; then echo "working tree not clean — commit or stash first"; exit 1; fi; \
 	git checkout main; git pull --ff-only; \
 	npm version --no-git-tag-version $(BUMP) --preid=$(PREID); \
-	VERSION=$$(node -p "require('./package.json').version"); \
+	bun install; \
+	VERSION=$$(bun -p "require('./package.json').version"); \
 	git checkout -b "release/v$$VERSION"; \
 	$(NOSIGN) git commit -am "chore(release): v$$VERSION"; \
 	git push -u origin "release/v$$VERSION"; \
@@ -54,7 +55,7 @@ _release:
 release-tag:  ## Step 2: after the release PR merges, tag main to publish
 	@set -e; \
 	git checkout main; git pull --ff-only; \
-	VERSION=$$(node -p "require('./package.json').version"); \
+	VERSION=$$(bun -p "require('./package.json').version"); \
 	echo "Tagging v$$VERSION on main and pushing (fires the release workflow)…"; \
 	$(NOSIGN) git tag "v$$VERSION"; \
 	git push origin "v$$VERSION"

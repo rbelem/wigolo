@@ -41,8 +41,7 @@ _release:
 	@set -e; \
 	if [ -n "$$(git status --porcelain)" ]; then echo "working tree not clean — commit or stash first"; exit 1; fi; \
 	git checkout main; git pull --ff-only; \
-	npm version --no-git-tag-version $(BUMP) --preid=$(PREID); \
-	bun install; \
+	bun pm version $(BUMP) --no-git-tag-version --preid=$(PREID) >/dev/null; \
 	VERSION=$$(bun -p "require('./package.json').version"); \
 	git checkout -b "release/v$$VERSION"; \
 	$(NOSIGN) git commit -am "chore(release): v$$VERSION"; \
@@ -60,7 +59,7 @@ release-tag:  ## Step 2: after the release PR merges, tag main to publish
 	$(NOSIGN) git tag "v$$VERSION"; \
 	git push origin "v$$VERSION"
 
-release-dry-run:  ## Build and preview npm tarball (no publish, no tag)
+release-dry-run:  ## Build and preview the package tarball (no publish, no tag)
 	rm -rf dist
-	npm run build
-	npm publish --dry-run
+	bun run build
+	bun pm pack --dry-run

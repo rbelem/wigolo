@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type Database from '../../util/sqlite.js';
 import { createLogger } from '../../logger.js';
 
 const log = createLogger('cache');
@@ -381,7 +381,7 @@ export function applyMigrations(db: Database.Database, opts: { vecLoaded: boolea
     }
     try {
       db.transaction(() => {
-        db.exec(migration.sql);
+        if (migration.sql.trim()) db.exec(migration.sql);
         if (migration.postStep) {
           migration.postStep(db);
         }

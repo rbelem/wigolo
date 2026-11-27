@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
-import type Database from 'better-sqlite3';
+import type Database from '../util/sqlite.js';
 import { getDatabase } from './db.js';
 import { getConfig } from '../config.js';
 import { createLogger } from '../logger.js';

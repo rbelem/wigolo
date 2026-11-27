@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import Database from '../util/sqlite.js';
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createLogger } from '../logger.js';

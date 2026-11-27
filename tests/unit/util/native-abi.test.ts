@@ -73,13 +73,13 @@ describe('explainNativeLoadError', () => {
 
 describe('initDatabase on an ABI mismatch', () => {
   afterEach(() => {
-    vi.doUnmock('better-sqlite3');
+    vi.doUnmock('../../../src/util/sqlite.js');
     vi.resetModules();
   });
 
   it('rethrows the friendly message', async () => {
     vi.resetModules();
-    vi.doMock('better-sqlite3', () => ({
+    vi.doMock('../../../src/util/sqlite.js', () => ({
       default: class {
         constructor() {
           throw fakeAbiError();

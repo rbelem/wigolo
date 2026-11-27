@@ -1,6 +1,6 @@
 import { chmodSync, copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import Database from 'better-sqlite3';
+import Database from '../util/sqlite.js';
 import * as sv from 'sqlite-vec';
 import { createLogger } from '../logger.js';
 import { explainNativeLoadError } from '../util/native-abi.js';

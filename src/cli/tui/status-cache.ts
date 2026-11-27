@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import Database from '../../util/sqlite.js';
 
 export interface CacheStats {
   pages: number;

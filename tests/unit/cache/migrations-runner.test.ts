@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, chmodSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import Database from '../../../src/util/sqlite.js';
 import { applyMigrations, _resetMigrationGuard } from '../../../src/cache/migrations/runner.js';
 
 describe('applyMigrations', () => {

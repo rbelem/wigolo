@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { initDatabase, closeDatabase } from '../../../src/cache/db.js';
-import Database from 'better-sqlite3';
+import Database from '../../../src/util/sqlite.js';
 
 describe('database', () => {
   let db: Database.Database;

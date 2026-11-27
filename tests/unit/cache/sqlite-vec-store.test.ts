@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import Database from 'better-sqlite3';
+import Database from '../../../src/util/sqlite.js';
 import * as sv from 'sqlite-vec';
 import { SqliteVecStore } from '../../../src/cache/sqlite-vec-store.js';
 import type { VectorRecord } from '../../../src/providers/vector-store.js';

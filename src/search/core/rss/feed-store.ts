@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type Database from '../../../util/sqlite.js';
 import { getDatabase } from '../../../cache/db.js';
 import { createLogger } from '../../../logger.js';
 

@@ -8,6 +8,7 @@ const { OpenAICompatibleEmbedProvider } = await import(
 );
 
 interface Captured {
+  path: string | undefined;
   body: Record<string, unknown>;
   auth: string | undefined;
 }
@@ -15,7 +16,7 @@ interface Captured {
 let server: http.Server;
 let baseUrl: string;
 let captured: Captured[] = [];
-/** 384 = matches the index; 8 = a deliberate mismatch to force adaptation. */
+/** 384 matches the index; 1536 forces dimension adaptation. */
 let nativeDim = 384;
 /** When true the fake honours `dimensions`, emulating OpenRouter/OpenAI. */
 let honoursDimensions = true;
@@ -30,7 +31,7 @@ beforeAll(async () => {
     req.on('data', (c) => { raw += c.toString(); });
     req.on('end', () => {
       const body = JSON.parse(raw || '{}') as Record<string, unknown>;
-      captured.push({ body, auth: req.headers.authorization });
+      captured.push({ path: req.url, body, auth: req.headers.authorization });
 
       const inputs = Array.isArray(body.input) ? (body.input as string[]) : [String(body.input)];
       const requested = typeof body.dimensions === 'number' ? (body.dimensions as number) : undefined;
@@ -77,6 +78,19 @@ describe('OpenAICompatibleEmbedProvider', () => {
     resetConfig();
   });
 
+  it('accepts a full /embeddings base URL without appending the suffix twice', async () => {
+    use({
+      WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',
+      WIGOLO_EMBEDDING_BASE_URL: `${baseUrl}/embeddings`,
+      WIGOLO_EMBEDDING_API_KEY: 'test-key',
+      WIGOLO_EMBEDDING_MODEL: '@cf/baai/bge-small-en-v1.5',
+    });
+    const p = new OpenAICompatibleEmbedProvider();
+    await p.embed(['one']);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.path).toBe('/embeddings');
+  });
+
   it('embeds a batch and returns Float32Arrays', async () => {
     use({
       WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',
@@ -95,6 +109,17 @@ describe('OpenAICompatibleEmbedProvider', () => {
     // Native width already matches the index: no `dimensions` needed.
     expect(captured[0].body.dimensions).toBeUndefined();
     expect(captured).toHaveLength(1);
+  });
+
+  it('sends input_type when the provider requires it', async () => {
+    use({
+      WIGOLO_EMBEDDING_PROVIDER: 'openai-compatible',
+      WIGOLO_EMBEDDING_BASE_URL: baseUrl,
+      WIGOLO_EMBEDDING_INPUT_TYPE: 'query',
+      WIGOLO_EMBEDDING_MODEL: 'perplexity/pplx-embed-v1',
+    });
+    await new OpenAICompatibleEmbedProvider().embed(['x']);
+    expect(captured[0]?.body.input_type).toBe('query');
   });
 
   it('honours the Cloudflare native response shape', async () => {

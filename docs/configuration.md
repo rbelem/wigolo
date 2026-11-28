@@ -107,8 +107,9 @@ A Flatpak browser counts as an installed build, so `WIGOLO_BROWSER_CHANNEL=auto`
 | `WIGOLO_RERANKER_IDLE_TIMEOUT_MS` | `300000` | Idle ms before the ranking model's ONNX session is released. The session parks ~500 MB of native memory that the JS heap does not own. `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_IDLE_TIMEOUT` | `600000` | Idle ms before the embedding model's ONNX session is released (~300 MB of native memory). `0` keeps it resident. |
 | `WIGOLO_EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Embedding model for the semantic cache index and `find_similar`. Also the model name sent to a remote endpoint. |
+| `WIGOLO_EMBEDDING_INPUT_TYPE` | unset | Optional `input_type` (`query` or `document`) sent to hosted `/embeddings`. Some OpenRouter models require it. |
 | `WIGOLO_EMBEDDING_PROVIDER` | `local` | `local` runs fastembed in-process (~290 MB resident). `openai-compatible` calls a hosted `/embeddings` endpoint instead (0 MB resident, but a network round-trip and a per-token charge). |
-| `WIGOLO_EMBEDDING_BASE_URL` | unset | Hosted embeddings base URL for `WIGOLO_EMBEDDING_PROVIDER=openai-compatible`. The provider POSTs to `${baseUrl}/embeddings`. Examples: `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`, `https://openrouter.ai/api/v1`. |
+| `WIGOLO_EMBEDDING_BASE_URL` | unset | Hosted embeddings base URL for `WIGOLO_EMBEDDING_PROVIDER=openai-compatible`. Config appends `/embeddings` to a bare API base; a full endpoint is kept as-is. Examples: `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`, `https://openrouter.ai/api/v1/embeddings`. |
 | `WIGOLO_EMBEDDING_API_BASE` | unset | OpenAI-compatible base URL. Wigolo sends `POST <base>/embeddings`. When unset, the bundled embedding model runs in-process. |
 | `WIGOLO_EMBEDDING_API_KEY` | unset | Bearer token for a hosted embeddings endpoint (`WIGOLO_EMBEDDING_API_BASE` or `WIGOLO_EMBEDDING_PROVIDER=openai-compatible`). Requires HTTPS unless the endpoint is on loopback (`localhost`, `127.x`, `[::1]`). Read from env or keychain. Never persisted in `config.json`. |
 | `WIGOLO_EMBEDDING_REQUEST_TIMEOUT_MS` | `30000` | Remote embedding request timeout in milliseconds. A bad value falls back to the default. |
@@ -133,7 +134,7 @@ is self-explanatory:
 
 | Area | Names |
 |---|---|
-| Embeddings | `WIGOLO_EMBEDDING_PROVIDER`, `_BASE_URL`, `_API_BASE`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT`, `_REQUEST_TIMEOUT_MS` |
+| Embeddings | `WIGOLO_EMBEDDING_PROVIDER`, `_BASE_URL`, `_API_BASE`, `_API_KEY`, `_MODEL`, `_INPUT_TYPE`, `_IDLE_TIMEOUT`, `_REQUEST_TIMEOUT_MS` |
 | Reranker | `WIGOLO_RERANKER` (mode), `_BASE_URL`, `_API_KEY`, `_MODEL`, `_IDLE_TIMEOUT_MS` |
 | Browser | `WIGOLO_BROWSER_PROCESS_IDLE_TIMEOUT`, plus the pre-existing `WIGOLO_BROWSER_TYPES` / `_CHANNEL` / `_HEADFUL` / `_WINDOWLESS`, and `WIGOLO_CHROME_PATH` |
 
@@ -160,6 +161,19 @@ export WIGOLO_EMBEDDING_PROVIDER=openai-compatible
 export WIGOLO_EMBEDDING_BASE_URL=https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/ai/v1
 export WIGOLO_EMBEDDING_API_KEY=$CF_TOKEN
 export WIGOLO_EMBEDDING_MODEL=@cf/baai/bge-small-en-v1.5
+
+# Any OpenAI-compatible embeddings endpoint works. BASE_URL accepts either the
+# API base or the full /embeddings URL, so documented endpoints paste directly.
+# OpenCode Go (384 dims via the `dimensions` parameter):
+export WIGOLO_EMBEDDING_PROVIDER=openai-compatible
+export WIGOLO_EMBEDDING_BASE_URL=https://opencode.ai/inference/go/openai/v1/embeddings
+export WIGOLO_EMBEDDING_API_KEY=$OPENCODE_API_KEY
+export WIGOLO_EMBEDDING_MODEL=text-embedding-3-small
+
+# OpenRouter:
+# export WIGOLO_EMBEDDING_BASE_URL=https://openrouter.ai/api/v1/embeddings
+# export WIGOLO_EMBEDDING_API_KEY=$OPENROUTER_API_KEY
+# export WIGOLO_EMBEDDING_MODEL=openai/text-embedding-3-small
 
 # Reranker → hosted. Three wire formats, many vendors:
 #   workers-ai = Workers AI reranker shape ({query, contexts, top_k})
@@ -194,7 +208,7 @@ Whether a given gateway can serve each job:
 |---|---|---|
 | Cloudflare Workers AI | yes — `@cf/baai/bge-small-en-v1.5` (384, same model) | yes — `@cf/baai/bge-reranker-base` (`workers-ai`); Clef also via `decision` |
 | OpenRouter | yes — `/embeddings`, accepts `dimensions` | no |
-| OpenCode Zen | **no** embeddings endpoint | **yes** — Jev at `/inference/systemone/v1/systemone` (`decision`) |
+| OpenCode Go | yes — `/inference/go/openai/v1/embeddings`, accepts `dimensions` | **yes** — Jev at `/inference/systemone/v1/systemone` (`decision`) |
 | TypeSafe Jev (direct) | no | yes (`decision`) |
 | Kev / Ollaya / Decision Models / Clef self-hosted | no | yes (`decision`) |
 | Laya / pplx-decider | no | same question types, own endpoint — needs a thin adapter |

@@ -197,8 +197,9 @@ export interface Config {
    * cannot be used without re-indexing the sqlite-vec store.
    */
   embeddingProvider: 'local' | 'openai-compatible';
-  /** Base URL for the hosted embeddings API, e.g.
-   * `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`. */
+  /** Resolved full /embeddings endpoint for the hosted provider. The
+   * `WIGOLO_EMBEDDING_BASE_URL` value is normalized here: a bare API base gets
+   * `/embeddings` appended, a full endpoint is kept as-is. */
   embeddingBaseUrl: string | null;
   /**
    * Width of the vector index. NOT configurable: `vec_documents.embedding` is
@@ -217,6 +218,9 @@ export interface Config {
    * whole lifetime. 0 disables eviction (the session stays resident). */
   embeddingIdleTimeoutMs: number;
   embeddingMaxTextLength: number;
+  /** Optional `input_type` for hosted /embeddings endpoints that require it
+   * (e.g. OpenRouter Perplexity models need `query` for searches). */
+  embeddingInputType: 'query' | 'document' | null;
   /**
    * Base URL for an OpenAI-compatible embeddings endpoint. When set, the embed
    * factory sends `POST <base>/embeddings` and skips the on-device model.
@@ -989,7 +993,12 @@ export function getConfig(): Config {
       if (raw === 'local' || raw === 'openai-compatible') return raw;
       return 'local';
     })(),
-    embeddingBaseUrl: envStr('WIGOLO_EMBEDDING_BASE_URL', null, settings, 'embeddingBaseUrl'),
+    embeddingBaseUrl: (() => {
+      const raw = envStr('WIGOLO_EMBEDDING_BASE_URL', null, settings, 'embeddingBaseUrl');
+      if (!raw) return null;
+      const trimmed = raw.trim().replace(/\/+$/, '');
+      return /\/embeddings$/i.test(trimmed) ? trimmed : `${trimmed}/embeddings`;
+    })(),
     // Derived from the DDL (`vec_documents.embedding float[384]`), not a knob.
     // Exposing it as an env var could only ever accept one valid value while
     // letting a user set an impossible one.
@@ -1005,6 +1014,10 @@ export function getConfig(): Config {
       ['WIGOLO_EMBEDDING_IDLE_TIMEOUT_MS'],
     ),
     embeddingMaxTextLength: envInt('WIGOLO_EMBEDDING_MAX_TEXT_LENGTH', 8000, settings, 'embeddingMaxTextLength'),
+    embeddingInputType: (() => {
+      const raw = envStr('WIGOLO_EMBEDDING_INPUT_TYPE', null, settings, 'embeddingInputType');
+      return raw === 'query' || raw === 'document' ? raw : null;
+    })(),
     embeddingApiBase: envStr('WIGOLO_EMBEDDING_API_BASE', null, settings, 'embeddingApiBase'),
     // Env or keychain only, like the search credentials above: a hosted-
     // inference bearer token must not be readable from config.json.

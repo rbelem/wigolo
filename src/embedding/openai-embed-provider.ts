@@ -10,12 +10,14 @@
  *   - Cloudflare Workers AI   https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1
  *                             (@cf/baai/bge-small-en-v1.5 — 384 dims, the SAME
  *                             model the local path runs, so no re-embedding)
- *   - OpenRouter              https://openrouter.ai/api/v1
+ *   - OpenRouter              https://openrouter.ai/api/v1/embeddings
  *                             (openai/text-embedding-3-small and friends)
  *   - OpenAI, Jina, Voyage, Together, DeepInfra, llama.cpp / LM Studio
  *
- * OpenCode Zen is NOT an option: its gateway exposes responses, chat
- * completions, messages, models, and systemone — no embeddings endpoint.
+ * OpenCode Go exposes embeddings at
+ *   https://opencode.ai/inference/go/openai/v1/embeddings
+ * with `dimensions` support. The configured base may be given with or
+ * without the trailing `/embeddings`; config resolves both to the endpoint.
  */
 import type { EmbedProvider } from '../providers/embed-provider.js';
 import { assertHostedUrl, postJsonCapped } from '../providers/hosted-http.js';
@@ -38,8 +40,7 @@ interface EmbeddingsResponse {
 export class OpenAICompatibleEmbedProvider implements EmbedProvider {
   readonly modelId: string;
   readonly dim: number;
-  private baseUrl: string;
-  private readonly rawBaseUrl: string | null;
+  private readonly endpoint: string;
   private readonly apiKey: string | null;
   private validated = false;
   /**
@@ -53,8 +54,7 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
     const cfg = getConfig();
     this.modelId = cfg.embeddingModel;
     this.dim = cfg.embeddingDim;
-    this.rawBaseUrl = cfg.embeddingBaseUrl;
-    this.baseUrl = (cfg.embeddingBaseUrl ?? '').replace(/\/+$/, '');
+    this.endpoint = cfg.embeddingBaseUrl ?? '';
     this.apiKey = cfg.embeddingApiKey;
   }
 
@@ -64,13 +64,13 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
    * loaded — that is the point of this provider.
    */
   async warmup(): Promise<void> {
-    this.baseUrl = assertHostedUrl(
-      this.rawBaseUrl,
+    const validated = assertHostedUrl(
+      this.endpoint,
       'WIGOLO_EMBEDDING_BASE_URL (WIGOLO_EMBEDDING_PROVIDER=openai-compatible)',
       this.apiKey,
       'WIGOLO_EMBEDDING_PROVIDER=openai-compatible requires WIGOLO_EMBEDDING_BASE_URL ' +
         '(e.g. https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1, or ' +
-        'https://openrouter.ai/api/v1)',
+        'https://opencode.ai/inference/go/openai/v1/embeddings)',
     );
     this.validated = true;
     log.info('embed provider ready', {
@@ -78,7 +78,7 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
       impl: 'openai-compatible',
       modelId: this.modelId,
       dim: this.dim,
-      baseUrl: this.baseUrl,
+      endpoint: this.endpoint,
     });
   }
 
@@ -116,19 +116,18 @@ export class OpenAICompatibleEmbedProvider implements EmbedProvider {
   }
 
   private async request(texts: string[], dimensions: number | undefined): Promise<number[][]> {
-    // Cap each input. Hosted endpoints reject over-length input with a 400, and
-    // `WIGOLO_EMBEDDING_MAX_TEXT_LENGTH` existed but had no consumer at all —
-    // a whole fetched page would otherwise be sent verbatim.
+    // Hosted endpoints reject over-length input with a 400.
     const maxChars = getConfig().embeddingMaxTextLength;
     const capped = maxChars > 0
       ? texts.map((t) => (t.length > maxChars ? t.slice(0, maxChars) : t))
       : texts;
 
     const payload = await postJsonCapped<EmbeddingsResponse>({
-      url: `${this.baseUrl}/embeddings`,
+      url: this.endpoint,
       body: {
         model: this.modelId,
         input: capped,
+        ...(getConfig().embeddingInputType ? { input_type: getConfig().embeddingInputType } : {}),
         ...(dimensions !== undefined ? { dimensions } : {}),
       },
       apiKey: this.apiKey,

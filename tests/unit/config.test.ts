@@ -773,11 +773,17 @@ describe('hosted-inference env naming', () => {
 
     const c = getConfig();
     expect(c.embeddingProvider).toBe('openai-compatible');
-    expect(c.embeddingBaseUrl).toBe('https://example.test/v1');
+    expect(c.embeddingBaseUrl).toBe('https://example.test/v1/embeddings');
     expect(c.embeddingApiKey).toBe('k');
     expect(c.reranker).toBe('decision');
     expect(c.rerankerBaseUrl).toBe('https://example.test/systemone');
     expect(c.rerankerApiKey).toBe('k2');
     expect(c.rerankerModel).toBe('jev-1.13');
+  });
+
+  it('normalizes a full /embeddings base URL without duplicating the suffix', () => {
+    process.env.WIGOLO_EMBEDDING_BASE_URL = 'https://example.test/v1/embeddings';
+    resetConfig();
+    expect(getConfig().embeddingBaseUrl).toBe('https://example.test/v1/embeddings');
   });
 });
